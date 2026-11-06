@@ -294,6 +294,16 @@ pub enum ResourceRef {
 }
 
 impl ResourceRef {
+    /// The list this resource is shown in.
+    pub fn list_kind(&self) -> ResourceKind {
+        match self {
+            ResourceRef::Pod(_) => ResourceKind::Pods,
+            ResourceRef::Image(_) => ResourceKind::Images,
+            ResourceRef::Service(_) => ResourceKind::Services,
+            ResourceRef::Pvc(_) | ResourceRef::Pv(_) => ResourceKind::Storage,
+        }
+    }
+
     pub fn kind_label(&self) -> &'static str {
         match self {
             ResourceRef::Pod(_) => "Pod",

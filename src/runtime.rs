@@ -245,6 +245,7 @@ fn error_lists(error: &FetchError) -> fetch::Lists {
         storage: Err(error.clone()),
         storage_partial: None,
         events: Err(error.clone()),
+        truncated: Vec::new(),
     }
 }
 

@@ -10,7 +10,7 @@ use unicode_width::UnicodeWidthStr;
 use super::layout::LayoutMode;
 use super::theme::Theme;
 use crate::app::{App, Focus, PaneStatus};
-use crate::cluster::fetch::FetchError;
+use crate::cluster::fetch::{FetchError, MAX_ITEMS};
 use crate::model::{PodStatus, ResourceKind, format_age, format_ports};
 use crate::text::truncate;
 
@@ -197,7 +197,7 @@ fn rows(app: &App, kind: ResourceKind, mode: LayoutMode, theme: &Theme) -> Vec<V
 
 fn pane_title(app: &App, kind: ResourceKind) -> String {
     let filter = app.filter(kind);
-    if filter.is_empty() {
+    let mut title = if filter.is_empty() {
         format!(
             "[{}]─{} {}",
             kind.number(),
@@ -212,7 +212,11 @@ fn pane_title(app: &App, kind: ResourceKind) -> String {
             app.row_count(kind),
             app.total_rows(kind)
         )
+    };
+    if app.is_truncated(kind) {
+        title.push_str(&format!(" · first {MAX_ITEMS}"));
     }
+    title
 }
 
 fn pane_subtitle(app: &App, kind: ResourceKind) -> String {
@@ -384,6 +388,10 @@ fn error_lines(error: &FetchError, theme: &Theme) -> Vec<Line<'static>> {
                 theme.muted,
             ),
         ],
+        // The viewer explains authentication problems once (see viewer::auth_help).
+        FetchError::Unauthorized(_) => {
+            vec![Line::styled("✕ Unauthorized (401) — see viewer", theme.err)]
+        }
         other => vec![
             Line::styled(format!("✕ {other}"), theme.err),
             Line::styled("r retry", theme.muted),

@@ -92,6 +92,7 @@ pub fn sample_lists() -> kglass::cluster::fetch::Lists {
         storage: Ok(snap.storage),
         storage_partial: None,
         events: Ok(snap.events),
+        truncated: Vec::new(),
     }
 }
 

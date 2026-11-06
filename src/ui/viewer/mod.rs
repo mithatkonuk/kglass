@@ -13,7 +13,7 @@ use ratatui::widgets::{Block, Paragraph, Wrap};
 use unicode_width::UnicodeWidthStr;
 
 use super::theme::Theme;
-use crate::app::{App, Focus, ViewerTab, YamlState};
+use crate::app::{App, Connection, Focus, ViewerTab, YamlState};
 use crate::fake::sample_yaml;
 use crate::model::{EventType, ResourceRef, format_age};
 use crate::text::{SafeText, truncate};
@@ -59,10 +59,11 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &mut App, theme: &Theme) {
     match app.current_tab() {
         None => {
             app.viewer_rows = usize::from(inner.height);
-            frame.render_widget(
-                Paragraph::new(Span::styled("Nothing selected", theme.muted)),
-                inner,
-            );
+            let lines = match &app.connection {
+                Connection::Disconnected { error } => auth_help(app, error, theme),
+                _ => vec![Line::styled("Nothing selected", theme.muted)],
+            };
+            frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
         }
         Some(ViewerTab::Logs) => pod::draw_logs(frame, inner, app, theme),
         Some(tab) => {
@@ -165,6 +166,33 @@ fn yaml_lines(app: &App, r: &ResourceRef, theme: &Theme) -> Vec<Line<'static>> {
     text.lines()
         .map(|l| Line::raw(SafeText::from(l).to_string()))
         .collect()
+}
+
+/// What to do when the cluster cannot be used. Credentials are never shown.
+fn auth_help(app: &App, error: &SafeText, theme: &Theme) -> Vec<Line<'static>> {
+    let ctx = &app.snapshot.context;
+    let unauthorized = error.as_str().starts_with("Unauthorized");
+    let headline = if unauthorized {
+        format!("✕ Cannot authenticate to context {ctx}")
+    } else {
+        format!("✕ Cannot reach context {ctx}")
+    };
+    let fix = match (unauthorized, app.context_hint()) {
+        (true, "rancher") => {
+            "Rancher: download a fresh kubeconfig (or API token) from the Rancher UI, then press r."
+        }
+        (true, _) => "Refresh your credentials (for example log in again), then press r.",
+        (false, _) => "Check the network or VPN, then press r.",
+    };
+    vec![
+        Line::styled(headline, theme.err),
+        Line::raw(format!("  {error}")),
+        Line::default(),
+        Line::raw(fix),
+        Line::raw("Or press x to pick another context, q to quit."),
+        Line::default(),
+        Line::styled("Credentials are never shown by kglass.", theme.muted),
+    ]
 }
 
 /// Which related item is highlighted: only while the viewer has focus.

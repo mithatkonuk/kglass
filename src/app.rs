@@ -231,6 +231,8 @@ pub struct App {
     pub log_hint: Option<SafeText>,
     /// Index into `related()` while the viewer has focus.
     pub related_cursor: usize,
+    /// Lists cut off at the item cap in the last refresh.
+    truncated: [bool; 4],
     pub hits: HitMap,
     pub size: (u16, u16),
     pub connection: Connection,
@@ -291,6 +293,7 @@ impl App {
             logs_previous: false,
             log_hint: None,
             related_cursor: 0,
+            truncated: [false; 4],
             all_namespaces: opts.all_namespaces,
             hits: HitMap::default(),
             size: (0, 0),
@@ -384,6 +387,19 @@ impl App {
     /// True when the pane shows rows from an earlier refresh because the last one failed.
     pub fn is_stale(&self, kind: ResourceKind) -> bool {
         matches!(self.panes[kind.index()], PaneStatus::Failed(_)) && self.row_count(kind) > 0
+    }
+
+    /// The last refresh of this list stopped at the item cap.
+    pub fn is_truncated(&self, kind: ResourceKind) -> bool {
+        self.truncated[kind.index()]
+    }
+
+    /// Platform hint of the current context (e.g. `rancher`), from kubeconfig.
+    pub fn context_hint(&self) -> &'static str {
+        self.contexts
+            .iter()
+            .find(|c| c.name == self.snapshot.context)
+            .map_or("", |c| c.hint)
     }
 
     /// YAML state for the selected resource, if it was requested.
@@ -616,6 +632,7 @@ impl App {
         self.container = 0;
         self.filters = Default::default();
         self.cursors = Default::default();
+        self.truncated = [false; 4];
         self.panes = std::array::from_fn(|_| PaneStatus::Loading {
             since_tick: self.ticks,
         });
@@ -666,6 +683,7 @@ impl App {
         if let Ok(events) = lists.events {
             self.snapshot.events = events;
         }
+        self.truncated = std::array::from_fn(|i| lists.truncated.iter().any(|k| k.index() == i));
 
         for (kind, previous) in ResourceKind::ALL.into_iter().zip(remembered) {
             let len = self.row_count(kind);
@@ -709,7 +727,8 @@ impl App {
         let Some(r) = self.selected.clone() else {
             return;
         };
-        if self.selection_present(&r) {
+        // A cut-off list may simply not include the selection: not a deletion.
+        if self.selection_present(&r) || self.is_truncated(r.list_kind()) {
             self.viewer_notice = None;
             return;
         }
@@ -1185,12 +1204,7 @@ impl App {
     /// Show `target` in the viewer and move the matching list's cursor to it,
     /// clearing that list's filter if it hides the row.
     pub fn jump_to(&mut self, target: ResourceRef) {
-        let kind = match target {
-            ResourceRef::Pod(_) => ResourceKind::Pods,
-            ResourceRef::Image(_) => ResourceKind::Images,
-            ResourceRef::Service(_) => ResourceKind::Services,
-            ResourceRef::Pvc(_) | ResourceRef::Pv(_) => ResourceKind::Storage,
-        };
+        let kind = target.list_kind();
         if self.find_row(kind, &target).is_none() {
             self.filters[kind.index()].clear();
         }
@@ -1809,6 +1823,7 @@ mod tests {
                 storage: Ok(snap.storage.clone()),
                 storage_partial: None,
                 events: Ok(snap.events.clone()),
+                truncated: Vec::new(),
             }
         }
 
@@ -2059,6 +2074,26 @@ mod tests {
             );
             assert!(a.is_stale(ResourceKind::Pods));
             assert!(a.is_stale(ResourceKind::Images), "images derive from pods");
+        }
+
+        #[test]
+        fn truncated_list_does_not_report_false_disappearance() {
+            let mut a = loaded();
+            let mut l = lists(&sample_snapshot());
+            if let Ok(pods) = &mut l.pods {
+                pods.remove(0);
+            }
+            l.truncated = vec![ResourceKind::Pods, ResourceKind::Images];
+            a.request_refresh();
+            a.update(data(DataEvent::Lists {
+                generation: 0,
+                lists: Box::new(l),
+            }));
+            assert_eq!(
+                a.viewer_notice, None,
+                "the pod may just be past the cut-off"
+            );
+            assert!(a.is_truncated(ResourceKind::Pods) && !a.is_truncated(ResourceKind::Services));
         }
 
         #[test]

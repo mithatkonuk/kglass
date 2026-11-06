@@ -18,7 +18,7 @@ use tokio::time::timeout;
 
 use super::config::describe_auth;
 use super::convert::{self, EndpointSlice, Timestamp};
-use crate::model::{KubeEvent, Pod, ResourceRef, Service, StorageItem};
+use crate::model::{KubeEvent, Pod, ResourceKind, ResourceRef, Service, StorageItem};
 use crate::text::SafeText;
 
 /// Upper bound for any single request (design D5).
@@ -26,7 +26,9 @@ pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 /// Items requested per page.
 const PAGE_SIZE: u32 = 500;
 /// Stop paging after this many items (large clusters; see design D13).
-const MAX_ITEMS: usize = 5000;
+pub const MAX_ITEMS: usize = 5000;
+/// The paging cap actually used; tiny in unit tests so truncation is testable.
+const PAGE_CAP: usize = if cfg!(test) { 3 } else { MAX_ITEMS };
 /// Longest log line kept (bytes); the rest is dropped and marked. With the
 /// 5000-line buffer this bounds log memory to about 40 MiB.
 pub const MAX_LOG_LINE: usize = 8 * 1024;
@@ -90,8 +92,14 @@ async fn bounded<T>(
     }
 }
 
+/// Items of one list call, and whether paging stopped at the cap.
+struct Listed<K> {
+    items: Vec<K>,
+    truncated: bool,
+}
+
 /// List all items (paged), stopping at [`MAX_ITEMS`].
-async fn list<K>(api: Api<K>, action: Action<'_>) -> Result<Vec<K>, FetchError>
+async fn list<K>(api: Api<K>, action: Action<'_>) -> Result<Listed<K>, FetchError>
 where
     K: Clone + DeserializeOwned + Debug,
 {
@@ -101,12 +109,27 @@ where
         let page = bounded(action, api.list(&params)).await?;
         items.extend(page.items);
         match page.metadata.continue_ {
-            Some(token) if !token.is_empty() && items.len() < MAX_ITEMS => {
+            Some(token) if !token.is_empty() => {
+                if items.len() >= PAGE_CAP {
+                    return Ok(Listed {
+                        items,
+                        truncated: true,
+                    });
+                }
                 params = params.continue_token(&token);
             }
-            _ => return Ok(items),
+            _ => {
+                return Ok(Listed {
+                    items,
+                    truncated: false,
+                });
+            }
         }
     }
+}
+
+fn was_truncated<K>(listed: &Result<Listed<K>, FetchError>) -> bool {
+    listed.as_ref().is_ok_and(|l| l.truncated)
 }
 
 /// Everything the four lists need for one namespace.
@@ -119,6 +142,8 @@ pub struct Lists {
     /// Set when PVCs listed but PVs (cluster scope) did not.
     pub storage_partial: Option<FetchError>,
     pub events: Result<Vec<KubeEvent>, FetchError>,
+    /// Lists cut off at [`MAX_ITEMS`]; Images follow Pods.
+    pub truncated: Vec<ResourceKind>,
 }
 
 pub async fn fetch_lists(client: &Client, ns: &str, now: Timestamp) -> Lists {
@@ -159,6 +184,22 @@ pub async fn fetch_lists(client: &Client, ns: &str, now: Timestamp) -> Lists {
             in_ns("events")
         ),
     );
+    let mut truncated = Vec::new();
+    if was_truncated(&pods) {
+        truncated.extend([ResourceKind::Pods, ResourceKind::Images]);
+    }
+    if was_truncated(&services) {
+        truncated.push(ResourceKind::Services);
+    }
+    if was_truncated(&pvcs) || was_truncated(&pvs) {
+        truncated.push(ResourceKind::Storage);
+    }
+    let pods = pods.map(|l| l.items);
+    let services = services.map(|l| l.items);
+    let slices = slices.map(|l| l.items);
+    let pvcs = pvcs.map(|l| l.items);
+    let pvs = pvs.map(|l| l.items);
+    let events = events.map(|l| l.items);
     let raw_pods = pods.as_deref().unwrap_or_default();
     let services = services.and_then(|svcs| {
         let slices = slices?;
@@ -190,6 +231,7 @@ pub async fn fetch_lists(client: &Client, ns: &str, now: Timestamp) -> Lists {
         storage,
         storage_partial,
         events: events.map(|es| es.iter().filter_map(|e| convert::event(e, now)).collect()),
+        truncated,
     }
 }
 
@@ -279,7 +321,9 @@ pub async fn namespaces(client: &Client) -> Result<Vec<SafeText>, FetchError> {
         resource: "namespaces",
         scope: "cluster",
     };
-    let all = list(Api::<k8s::Namespace>::all(client.clone()), action).await?;
+    let all = list(Api::<k8s::Namespace>::all(client.clone()), action)
+        .await?
+        .items;
     Ok(all
         .iter()
         .filter_map(|n| n.metadata.name.as_deref().map(SafeText::from))
@@ -515,6 +559,29 @@ mod tests {
             FetchError::Unauthorized(msg) => assert!(!msg.as_str().contains("SECRET"), "{msg}"),
             other => panic!("unexpected {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn paging_stops_at_cap_and_reports_truncation() {
+        fn route(path: &str) -> Reply {
+            if path == "/api/v1/namespaces/shop/pods" {
+                let item = r#"{"metadata":{"name":"p"},"spec":{"containers":[]}}"#;
+                let body = format!(
+                    r#"{{"apiVersion":"v1","kind":"PodList","metadata":{{"continue":"next"}},"items":[{item},{item}]}}"#
+                );
+                return Some((200, body.into_bytes()));
+            }
+            healthy(path)
+        }
+        let lists = fetch_lists(&mock(route), NS, now()).await;
+        assert_eq!(
+            lists.pods.unwrap().len(),
+            4,
+            "two pages of two reach the test cap of 3"
+        );
+        assert_eq!(lists.truncated, [ResourceKind::Pods, ResourceKind::Images]);
+        let healthy_lists = fetch_lists(&mock(healthy), NS, now()).await;
+        assert!(healthy_lists.truncated.is_empty());
     }
 
     #[test]

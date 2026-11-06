@@ -245,7 +245,11 @@ pub fn pvc(c: &k8s::PersistentVolumeClaim, pods: &[k8s::Pod]) -> StorageItem {
     StorageItem {
         kind: StorageKind::Pvc,
         name: SafeText::from(name),
-        status: text(status.and_then(|s| s.phase.as_deref()), "Unknown"),
+        status: if c.metadata.deletion_timestamp.is_some() {
+            SafeText::from("Terminating")
+        } else {
+            text(status.and_then(|s| s.phase.as_deref()), "Unknown")
+        },
         capacity: text(capacity, "—"),
         access_modes: access_modes(spec.and_then(|s| s.access_modes.as_ref())),
         storage_class: text(spec.and_then(|s| s.storage_class_name.as_deref()), "—"),
@@ -530,6 +534,16 @@ mod tests {
             (events[1].count, crate::model::format_age(events[1].age)),
             (4, "10m".to_string())
         );
+    }
+
+    #[test]
+    fn pvc_being_deleted_is_terminating() {
+        let c: k8s::PersistentVolumeClaim = serde_json::from_value(serde_json::json!({
+            "metadata": {"name": "old", "deletionTimestamp": "2026-11-06T11:00:00Z"},
+            "status": {"phase": "Bound"}
+        }))
+        .unwrap();
+        assert_eq!(pvc(&c, &[]).status.as_str(), "Terminating");
     }
 
     #[test]

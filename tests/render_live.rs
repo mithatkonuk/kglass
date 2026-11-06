@@ -403,3 +403,43 @@ fn toolbar_shows_previous_state() {
         "{s}"
     );
 }
+
+#[test]
+fn truncated_title() {
+    let mut a = live_app();
+    let mut l = sample_lists();
+    l.truncated = vec![ResourceKind::Pods, ResourceKind::Images];
+    a.update(lists_event(l));
+    let s = render_to_string(&mut a, 160, 48);
+    assert!(s.contains("[1]─Pods 6 · first 5000"), "{s}");
+}
+
+#[test]
+fn auth_help_shown_once_in_viewer() {
+    let mut a = with_contexts(live_app());
+    let unauthorized = FetchError::Unauthorized("token expired".into());
+    a.update(AppEvent::Data(DataEvent::Version {
+        generation: 0,
+        result: Err(unauthorized.clone()),
+    }));
+    let mut l = sample_lists();
+    l.pods = Err(unauthorized.clone());
+    l.services = Err(unauthorized.clone());
+    l.storage = Err(unauthorized.clone());
+    l.events = Err(unauthorized);
+    a.update(lists_event(l));
+    let s = render_to_string(&mut a, 160, 48);
+    for needle in [
+        "✕ Cannot authenticate to context dev-01",
+        "Rancher: download a fresh kubeconfig (or API token) from the Rancher UI, then press r.",
+        "Or press x to pick another context, q to quit.",
+        "✕ Unauthorized (401) — see viewer",
+    ] {
+        assert!(s.contains(needle), "missing {needle:?}\n{s}");
+    }
+    assert_eq!(
+        s.matches("token expired").count(),
+        2,
+        "header + viewer only\n{s}"
+    );
+}
