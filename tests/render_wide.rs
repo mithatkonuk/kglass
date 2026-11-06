@@ -139,10 +139,10 @@ fn help_overlay_lists_keys() {
     for needle in [
         "Help",
         "zoom viewer",
-        "next container",
-        "follow logs",
+        "container, follow, previous, raw JSON",
         "switch context / namespace",
-        "filter the list",
+        "filter the list / search the logs",
+        "viewer: ↑↓ enter jump",
     ] {
         assert!(s.contains(needle), "missing {needle:?}\n{s}");
     }

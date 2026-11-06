@@ -2,7 +2,7 @@
 
 A fast, **read-only** terminal viewer for Kubernetes clusters. Pick a pod, image, service or volume from the lists on the left, and the large viewer on the right shows its logs, details and related resources.
 
-> **Status: phase 2.** Connects to your real cluster, read-only. Uses the same kubeconfig, context and namespace that `kubectl` would.
+> **Status: phase 3.** Connects to your real cluster, read-only. Uses the same kubeconfig, context and namespace that `kubectl` would.
 
 ## Features
 
@@ -14,6 +14,11 @@ A fast, **read-only** terminal viewer for Kubernetes clusters. Pick a pod, image
   - Pods open on **live logs**, with a container switcher, follow mode and a buffer capped at 5000 lines.
   - Every resource has Summary/Details, Events and YAML tabs.
   - Service details show endpoint health and which pods match the selector.
+- **Logs built for debugging:**
+  - Structured JSON logs (for example ECS/Spring) show as readable `time LEVEL logger message ✕ error` lines; `J` shows the raw JSON.
+  - `/` in the log viewer shows only the matching lines.
+  - `p` shows the previous container instance's logs, for crash loops.
+- **Jump between related resources.** From a service to its pods, a claim to its volume or the pods mounting it, a pod to its services and claims, an image to the pods using it: `↑↓` then `Enter` in the viewer.
 - **Switch without leaving the app.** `x` picks a context and `n` picks a namespace. The switch lasts for the session only; kglass never writes to your kubeconfig. `/` filters a list by name.
 - **Honest about problems.** Each pane shows its own state: loading, `Forbidden (403)` with the exact permission needed, timeouts, or stale data after a failed refresh. One failure never blanks the rest. Expired credentials show `● Disconnected` in the header.
 - **Strictly read-only.** kglass only ever lists, gets and follows logs. It never reads Secrets and never shows credentials.

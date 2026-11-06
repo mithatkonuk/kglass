@@ -15,7 +15,10 @@ Everything works with the keyboard alone. The mouse is optional.
 | `c` | Next container (pod logs) |
 | `f` | Toggle follow mode (pod logs). Scrolling up also leaves follow mode |
 | `z` | Zoom the viewer to full screen |
-| `/` | Filter the focused list by name (type, `Enter` keeps it, `Esc` clears it) |
+| `/` | List focused: filter the list by name. Log viewer focused: search the logs. `Enter` keeps it, `Esc` clears it |
+| `p` | Logs: switch to the previous container instance (after restarts) and back |
+| `J` | Logs: show raw JSON instead of formatted lines |
+| `↑` `↓` then `Enter` | Viewer focused, with related resources shown: choose one and jump to it |
 | `x` | Switch context (from kubeconfig; type to filter, `Enter` switches) |
 | `n` | Switch namespace (type a name if listing namespaces is not allowed) |
 | `r` | Refresh now (lists refresh every 10s anyway) |
