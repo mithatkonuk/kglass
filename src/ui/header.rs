@@ -23,28 +23,25 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App, mode: LayoutMode, theme: &
         ("KG", " RO ")
     };
 
-    let mut spans = vec![
+    let spans = vec![
         Span::styled(name, theme.accent.patch(theme.title)),
         Span::raw("  "),
         Span::styled("ctx ", theme.muted),
         Span::styled(snap.context.as_str(), theme.title),
-        Span::raw(if wide { " ▾  " } else { "  " }),
+        Span::raw("  "),
         Span::styled("ns ", theme.muted),
         Span::styled(ns, theme.title),
-        Span::raw(if wide { " ▾  " } else { "  " }),
-        Span::styled("● Connected", theme.ok),
+        Span::raw("  "),
+        // Phase 1 never talks to a cluster: say so instead of showing a connection state.
+        Span::styled(
+            if wide {
+                "◌ SAMPLE DATA · not connected to a cluster"
+            } else {
+                "◌ SAMPLE DATA"
+            },
+            theme.warn,
+        ),
     ];
-    if wide {
-        spans.extend([
-            Span::raw("  "),
-            Span::styled(
-                format!("api {} · {}", snap.api_version, snap.distro),
-                theme.muted,
-            ),
-            Span::raw("  "),
-            Span::styled("⟳ sample data · every 10s", theme.muted),
-        ]);
-    }
 
     let badge_width = u16::try_from(badge.chars().count()).unwrap_or(0);
     let [left, right] =

@@ -300,3 +300,21 @@ fn print_screens() {
     a.update(key(ratatui::crossterm::event::KeyCode::Enter));
     println!("{}", render_to_string(&mut a, 92, 48));
 }
+
+#[test]
+fn header_says_sample_data_not_connected() {
+    let wide = render_to_string(&mut app(), 160, 48);
+    let header = wide.lines().next().unwrap();
+    assert!(
+        header.contains("SAMPLE DATA · not connected to a cluster"),
+        "{header}"
+    );
+    assert!(
+        !header.contains("Connected"),
+        "must not claim a connection: {header}"
+    );
+    let narrow = render_to_string(&mut app(), 92, 48);
+    let header = narrow.lines().next().unwrap();
+    assert!(header.contains("SAMPLE DATA"), "{header}");
+    assert!(!header.contains("Connected"), "{header}");
+}

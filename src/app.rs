@@ -303,7 +303,7 @@ impl App {
 
     fn on_tick(&mut self) {
         self.ticks += 1;
-        if self.ticks % TICKS_PER_LINE != 0 {
+        if !self.ticks.is_multiple_of(TICKS_PER_LINE) {
             return;
         }
         let Some(pod) = self.selected_pod().cloned() else {
