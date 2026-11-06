@@ -29,7 +29,7 @@ fn wide_matches_pdf_page1_text() {
         "pvc-77b2d4f1-141f",
         "Released",
         "1-4 jump to list",
-        "v0.1.0",
+        concat!("v", env!("CARGO_PKG_VERSION")),
     ] {
         assert!(s.contains(needle), "missing {needle:?}\n{s}");
     }

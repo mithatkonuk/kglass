@@ -263,6 +263,6 @@ Testing follows plan §12: unit tests for row formatting, image dedup, relations
 - **Remaining before 1.0:**
   - publish the repository (owner's decision)
   - watch the first CI run
-  - tag v0.1.0
+  - tag v0.2.0
   - try kglass in iTerm2, Terminal.app and a Linux terminal
 - **Release 2** (write actions) needs its own safety design before any code.
