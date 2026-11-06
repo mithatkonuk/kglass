@@ -1,7 +1,7 @@
 //! Conversion from Kubernetes API objects to Kubeglass's model.
 //! Every cluster string becomes `SafeText` here, at the boundary.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::time::Duration;
 
 use k8s_openapi::api::core::v1 as k8s;
@@ -160,7 +160,7 @@ pub fn service(s: &k8s::Service, slices: &[EndpointSlice]) -> Service {
         .collect();
     // Dual-stack Services have one EndpointSlice per address family, so the same
     // pod appears twice; count each backing pod (or address) once.
-    let ready_endpoints: std::collections::HashSet<String> = slices
+    let ready_endpoints: HashSet<String> = slices
         .iter()
         .filter(|sl| {
             sl.metadata
