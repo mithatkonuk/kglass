@@ -4,6 +4,7 @@
 use std::collections::BTreeMap;
 
 use crate::model::{ImageRef, ImageUsage, Pod};
+use crate::text::SafeText;
 
 /// Distinct images used by pods (including init containers), ordered by
 /// number of users (descending), then repository (ascending).
@@ -16,7 +17,7 @@ pub fn images_in_use(pods: &[Pod]) -> Vec<ImageUsage> {
                 Some(u) => u.users.push(user),
                 None => by_raw.push(ImageUsage {
                     raw: c.image.clone(),
-                    image: ImageRef::parse(c.image.as_str()),
+                    image: ImageRef::parse(&c.image),
                     users: vec![user],
                 }),
             }
@@ -33,7 +34,7 @@ pub fn images_in_use(pods: &[Pod]) -> Vec<ImageUsage> {
 
 /// Pods whose labels contain every selector entry. An empty selector matches
 /// nothing (a Service without a selector has manually managed endpoints).
-pub fn pods_matching<'a>(selector: &BTreeMap<String, String>, pods: &'a [Pod]) -> Vec<&'a Pod> {
+pub fn pods_matching<'a>(selector: &BTreeMap<SafeText, SafeText>, pods: &'a [Pod]) -> Vec<&'a Pod> {
     if selector.is_empty() {
         return Vec::new();
     }
@@ -52,7 +53,7 @@ mod tests {
         let imgs = images_in_use(&sample_snapshot().pods);
         let rows: Vec<(String, usize)> = imgs
             .iter()
-            .map(|i| (i.image.repository.clone(), i.users.len()))
+            .map(|i| (i.image.repository.to_string(), i.users.len()))
             .collect();
         assert_eq!(
             rows,

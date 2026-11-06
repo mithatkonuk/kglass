@@ -97,7 +97,7 @@ pub struct Pod {
     pub name: SafeText,
     pub namespace: SafeText,
     pub status: PodStatus,
-    pub labels: BTreeMap<String, String>,
+    pub labels: BTreeMap<SafeText, SafeText>,
     pub containers: Vec<Container>,
     pub age: Duration,
     pub node: SafeText,
@@ -162,7 +162,7 @@ pub struct Service {
     pub service_type: ServiceType,
     pub cluster_ip: SafeText,
     pub ports: Vec<ServicePort>,
-    pub selector: BTreeMap<String, String>,
+    pub selector: BTreeMap<SafeText, SafeText>,
     pub ready_endpoints: u32,
 }
 
@@ -195,17 +195,18 @@ pub struct StorageItem {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ImageRef {
-    pub repository: String,
-    pub tag: Option<String>,
-    pub digest: Option<String>,
+    pub repository: SafeText,
+    pub tag: Option<SafeText>,
+    pub digest: Option<SafeText>,
 }
 
 impl ImageRef {
     /// Split `repo[:tag][@digest]`. A `:` only starts a tag when it comes after
     /// the last `/`, so registry ports (`host:5000/repo`) are kept in the repository.
-    pub fn parse(raw: &str) -> ImageRef {
+    pub fn parse(raw: &SafeText) -> ImageRef {
+        let raw = raw.as_str();
         let (name, digest) = match raw.split_once('@') {
-            Some((n, d)) => (n, Some(d.to_string())),
+            Some((n, d)) => (n, Some(SafeText::from(d))),
             None => (raw, None),
         };
         let last_slash = name.rfind('/').map_or(0, |i| i + 1);
@@ -213,11 +214,11 @@ impl ImageRef {
             Some(i) => {
                 let split = last_slash + i;
                 (
-                    name[..split].to_string(),
-                    Some(name[split + 1..].to_string()),
+                    SafeText::from(&name[..split]),
+                    Some(SafeText::from(&name[split + 1..])),
                 )
             }
-            None => (name.to_string(), None),
+            None => (SafeText::from(name), None),
         };
         ImageRef {
             repository,
@@ -228,8 +229,8 @@ impl ImageRef {
 
     pub fn tag_or_digest(&self) -> String {
         match (&self.tag, &self.digest) {
-            (Some(tag), _) => tag.clone(),
-            (None, Some(digest)) => format!("@{}", shorten_digest(digest)),
+            (Some(tag), _) => tag.to_string(),
+            (None, Some(digest)) => format!("@{}", shorten_digest(digest.as_str())),
             (None, None) => "latest".to_string(),
         }
     }
@@ -377,21 +378,30 @@ mod tests {
 
     #[test]
     fn image_refs() {
-        let r = ImageRef::parse("registry.acme.io:5000/payments/api:v2.14.0");
+        let r = ImageRef::parse(&"registry.acme.io:5000/payments/api:v2.14.0".into());
         assert_eq!(
-            (r.repository.as_str(), r.tag.as_deref()),
+            (r.repository.as_str(), r.tag.as_ref().map(SafeText::as_str)),
             ("registry.acme.io:5000/payments/api", Some("v2.14.0"))
         );
-        assert_eq!(ImageRef::parse("busybox").tag_or_digest(), "latest");
+        assert_eq!(ImageRef::parse(&"busybox".into()).tag_or_digest(), "latest");
         assert_eq!(
-            ImageRef::parse("registry.acme.io/payments/billing@sha256:9f2c4b7e1d0a3c5f6e7d8c9b0a1f2e3d4c5b6a7980f1e2d3c4b5a69788e81a")
+            ImageRef::parse(&"registry.acme.io/payments/billing@sha256:9f2c4b7e1d0a3c5f6e7d8c9b0a1f2e3d4c5b6a7980f1e2d3c4b5a69788e81a".into())
                 .tag_or_digest(),
             "@sha256:9f2c…e81a"
         );
         assert_eq!(
-            ImageRef::parse("registry.acme.io:5000/payments/api").tag,
+            ImageRef::parse(&"registry.acme.io:5000/payments/api".into()).tag,
             None
         );
+    }
+
+    #[test]
+    fn cluster_strings_in_collections_are_safe_text() {
+        let r = ImageRef::parse(&SafeText::from("evil\x1b[2J/app:v1"));
+        assert_eq!(r.repository.as_str(), "evil/app");
+        let s = sample_snapshot();
+        let (k, v): (&SafeText, &SafeText) = s.pods[0].labels.iter().next().unwrap();
+        assert_eq!((k.as_str(), v.as_str()), ("app", "api"));
     }
 
     #[test]

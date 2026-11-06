@@ -252,7 +252,11 @@ impl App {
     }
 
     /// Show `r` in the viewer on its default tab, replacing any log stream.
+    /// Selecting the resource already shown keeps the viewer as it is.
     pub fn select(&mut self, r: ResourceRef) {
+        if self.selected.as_ref() == Some(&r) {
+            return;
+        }
         self.selected = Some(r);
         self.tab = 0;
         self.container = 0;
@@ -261,10 +265,19 @@ impl App {
     }
 
     /// Focus a pane (also used by mouse handling).
+    /// Focusing a list leaves zoom, since lists are hidden while zoomed.
     pub fn set_focus(&mut self, focus: Focus) {
         self.focus = focus;
         if let Focus::List(kind) = focus {
             self.last_list = kind;
+            self.zoom = false;
+        }
+    }
+
+    fn toggle_zoom(&mut self) {
+        self.zoom = !self.zoom;
+        if self.zoom {
+            self.focus = Focus::Viewer;
         }
     }
 
@@ -309,7 +322,18 @@ impl App {
             return;
         }
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-        if (ctrl && key.code == KeyCode::Char('c')) || key.code == KeyCode::Char('q') {
+        if ctrl && key.code == KeyCode::Char('c') {
+            self.quit = true;
+            return;
+        }
+        // Only plain (or shifted) keys are bound; Ctrl/Alt/Super combinations are ignored.
+        if key
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER)
+        {
+            return;
+        }
+        if key.code == KeyCode::Char('q') {
             self.quit = true;
             return;
         }
@@ -322,7 +346,7 @@ impl App {
         match key.code {
             KeyCode::Char('?') => self.help = true,
             KeyCode::Esc => self.zoom = false,
-            KeyCode::Char('z') => self.zoom = !self.zoom,
+            KeyCode::Char('z') => self.toggle_zoom(),
             KeyCode::Up | KeyCode::Char('k') => self.move_focused(-1),
             KeyCode::Down | KeyCode::Char('j') => self.move_focused(1),
             KeyCode::PageUp => self.move_focused(-PAGE),
@@ -334,7 +358,7 @@ impl App {
             KeyCode::Right => self.cycle_tab(1),
             KeyCode::Char('f') => {
                 let on = !self.logs.follow();
-                self.logs.set_follow(on);
+                self.logs.set_follow(on, self.viewer_rows);
             }
             KeyCode::Char('c') => self.cycle_container(),
             KeyCode::Char(d @ '1'..='4') => {
@@ -354,8 +378,16 @@ impl App {
         }
     }
 
+    /// True when the viewer shows a log stream (Logs tab of a pod that has started).
+    pub fn shows_log_stream(&self) -> bool {
+        self.current_tab() == Some(ViewerTab::Logs)
+            && self
+                .selected_pod()
+                .is_some_and(|p| p.status != crate::model::PodStatus::Pending)
+    }
+
     pub fn scroll_viewer(&mut self, delta: isize) {
-        if self.current_tab() == Some(ViewerTab::Logs) {
+        if self.shows_log_stream() {
             self.logs.scroll_by(delta, self.viewer_rows);
         } else {
             self.viewer_scroll = self
@@ -583,6 +615,64 @@ mod tests {
         assert_eq!(a.focus, Focus::List(ResourceKind::Pods));
         a.update(key(KeyCode::Esc));
         assert!(!a.help);
+    }
+
+    #[test]
+    fn zoom_focuses_viewer_and_list_keys_leave_it() {
+        let mut a = app();
+        a.update(key(KeyCode::Char('z')));
+        assert_eq!(a.focus, Focus::Viewer);
+        a.update(key(KeyCode::Enter));
+        assert_eq!(
+            a.selected,
+            pod("api-7c9d8f-x2k4"),
+            "enter does not act on a hidden list"
+        );
+        a.update(key(KeyCode::Char('3')));
+        assert!(!a.zoom, "jumping to a list leaves zoom");
+        assert_eq!(a.focus, Focus::List(ResourceKind::Services));
+    }
+
+    #[test]
+    fn reselecting_same_row_keeps_viewer_state() {
+        let mut a = app();
+        a.update(key(KeyCode::Right));
+        a.update(AppEvent::Tick);
+        a.update(AppEvent::Tick);
+        a.update(key(KeyCode::Enter));
+        assert_eq!(a.current_tab(), Some(ViewerTab::Summary));
+        assert_eq!(a.logs.len(), 35, "log stream is not restarted");
+    }
+
+    #[test]
+    fn modified_keys_do_not_trigger_plain_actions() {
+        let mut a = app();
+        a.update(AppEvent::Key(KeyEvent::new(
+            KeyCode::Char('z'),
+            KeyModifiers::CONTROL,
+        )));
+        a.update(AppEvent::Key(KeyEvent::new(
+            KeyCode::Char('q'),
+            KeyModifiers::ALT,
+        )));
+        assert!(!a.zoom && !a.quit);
+        a.update(AppEvent::Key(KeyEvent::new(
+            KeyCode::BackTab,
+            KeyModifiers::SHIFT,
+        )));
+        assert_eq!(a.focus, Focus::Viewer, "shift is allowed");
+    }
+
+    #[test]
+    fn pending_pod_logs_tab_scrolls_viewer() {
+        let mut a = app();
+        for _ in 0..5 {
+            a.update(key(KeyCode::Down));
+        }
+        a.update(key(KeyCode::Enter));
+        a.set_focus(Focus::Viewer);
+        a.update(key(KeyCode::Down));
+        assert_eq!(a.viewer_scroll, 1);
     }
 
     #[test]

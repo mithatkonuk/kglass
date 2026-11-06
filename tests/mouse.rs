@@ -94,7 +94,7 @@ fn resize_to_narrow_keeps_focus_and_zoom() {
     render_to_string(&mut a, 160, 48);
     a.update(AppEvent::Resize(92, 48));
     let s = render_to_string(&mut a, 92, 48);
-    assert_eq!(a.focus, Focus::List(ResourceKind::Storage));
+    assert_eq!(a.focus, Focus::Viewer, "zoom focuses the viewer");
     assert!(a.zoom);
     assert!(s.contains("Pod api-7c9d8f-x2k4"), "{s}");
     a.update(key(KeyCode::Char('z')));

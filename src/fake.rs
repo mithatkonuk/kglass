@@ -24,8 +24,8 @@ fn t(s: &str) -> SafeText {
     SafeText::from(s)
 }
 
-fn labels(app: &str) -> BTreeMap<String, String> {
-    BTreeMap::from([("app".to_string(), app.to_string())])
+fn labels(app: &str) -> BTreeMap<SafeText, SafeText> {
+    BTreeMap::from([(t("app"), t(app))])
 }
 
 fn container(name: &str, image: &str, ready: bool, restarts: u32) -> Container {

@@ -92,3 +92,13 @@ fn service_endpoints_tab() {
     assert!(s.contains("2 ready endpoints"), "{s}");
     assert!(s.contains("10.244.1.17") && s.contains("[derived]"), "{s}");
 }
+
+#[test]
+fn help_fits_minimum_terminal() {
+    let mut a = app();
+    a.update(key(KeyCode::Char('?')));
+    let s = render_to_string(&mut a, 60, 16);
+    for needle in ["Help", "quit", "wheel scrolls"] {
+        assert!(s.contains(needle), "missing {needle:?}\n{s}");
+    }
+}

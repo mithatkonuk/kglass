@@ -20,7 +20,7 @@ pub const BINDINGS: &[(&str, &str)] = &[
     ("esc", "close help / leave zoom"),
     ("?", "toggle help"),
     ("q / ctrl+c", "quit"),
-    ("mouse", "click rows, panes and tabs; wheel scrolls"),
+    ("mouse", "click rows/tabs; wheel scrolls"),
 ];
 
 pub fn draw(frame: &mut Frame, area: Rect, theme: &Theme) {
@@ -28,7 +28,7 @@ pub fn draw(frame: &mut Frame, area: Rect, theme: &Theme) {
     let [row] = Layout::vertical([Constraint::Length(height)])
         .flex(Flex::Center)
         .areas(area);
-    let [popup] = Layout::horizontal([Constraint::Length(62)])
+    let [popup] = Layout::horizontal([Constraint::Max(62)])
         .flex(Flex::Center)
         .areas(row);
     let lines: Vec<Line> = BINDINGS

@@ -189,4 +189,19 @@ Testing follows plan §12: unit tests for row formatting, image dedup, relations
 ## 9. Where we are / next step
 - 2026-11-06: plan and design reviewed, name chosen, Rust installed, this note written.
 - 2026-11-06: builder check done (D11–D14). Owner answered Q5 (show data as-is like kubectl), Q6 (own project, any cluster) and Q8 (name **Kubeglass / `kglass`**). Q7 (whether in-app context/namespace switches are saved to kubeconfig) is still open.
-- **Next:** turn phase 1 into a step-by-step implementation plan (`docs/plan-phase1.md`), then scaffold the `kglass` crate in this folder.
+- 2026-11-06: **Phase 0 done.** `kglass` is free on crates.io, Homebrew and npm, with no notable GitHub project.
+- 2026-11-06: **Phase 1 done** (static prototype, [`plan-phase1.md`](plan-phase1.md), 7 tasks, one commit each).
+  - **Delivered:** wide and narrow layouts matching PDF pages 1–2; all four lists; every viewer tab per resource; keyboard and mouse; simulated log streaming; no-colour mode; a "too small" screen.
+  - **Tests:** 93, all passing, with fmt and clippy `-D warnings` clean.
+  - **Real-terminal checks** (through a pty): the alternate screen and mouse reporting are restored on `q`, `Ctrl+C` and panic; resize to narrow and to too-small both work; `NO_COLOR` emits no colour codes.
+  - **Independent code review:** every finding was fixed with a test. Pausing follow now keeps the view. Zoom focuses the viewer, and list keys leave zoom. Labels, selectors and image fields are now `SafeText`. The sanitizer strips bidi and zero-width characters. Re-selecting a row keeps viewer state. Help fits 60×16. Width math no longer overflows. Pending-pod text scrolls. Ctrl/Alt key combos are ignored.
+  - **Deviations from the plan:**
+    - Log lines are stored as `SafeText`, so they are sanitized on ingest.
+    - Pods stream logs whatever tab is open.
+    - `z` moves focus to the viewer.
+    - Ages show as `2h05m`, as in the PDF.
+- **Carried into phase 2:**
+  - Restore the terminal on SIGTERM/SIGHUP (tokio signal handling arrives with tokio).
+  - Answer Q7.
+  - `--kubeconfig` is accepted but not used yet.
+- **Next:** write `docs/plan-phase2.md`, covering real kubeconfig loading per D15, the context/namespace pickers, real lists with loading/403/stale states, filter and refresh.

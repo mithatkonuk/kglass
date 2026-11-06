@@ -4,7 +4,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::Paragraph;
+use ratatui::widgets::{Paragraph, Wrap};
 
 use super::{events_lines, kv, note, section};
 use crate::app::{App, LOG_TAIL, ViewerTab};
@@ -20,7 +20,15 @@ pub(super) fn draw_logs(frame: &mut Frame, area: Rect, app: &mut App, theme: &Th
     };
     if pod.status == PodStatus::Pending {
         app.viewer_rows = usize::from(area.height);
-        frame.render_widget(Paragraph::new(not_started(app, &pod, theme)), area);
+        let lines = not_started(app, &pod, theme);
+        let max_scroll = u16::try_from(lines.len().saturating_sub(1)).unwrap_or(u16::MAX);
+        app.viewer_scroll = app.viewer_scroll.min(max_scroll);
+        frame.render_widget(
+            Paragraph::new(lines)
+                .wrap(Wrap { trim: false })
+                .scroll((app.viewer_scroll, 0)),
+            area,
+        );
         return;
     }
     let [toolbar, body, status] = Layout::vertical([

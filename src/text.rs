@@ -73,6 +73,14 @@ pub fn sanitize(raw: &str) -> String {
                 _ => {}
             },
             '\t' | '\n' => out.push(' '),
+            // Bidi overrides/isolates, zero-width and line/paragraph separators can
+            // reorder or hide neighbouring text.
+            '\u{200b}'..='\u{200f}'
+            | '\u{202a}'..='\u{202e}'
+            | '\u{2028}'
+            | '\u{2029}'
+            | '\u{2066}'..='\u{2069}'
+            | '\u{feff}' => {}
             c if c.is_control() => {}
             c => out.push(c),
         }
@@ -133,6 +141,15 @@ mod tests {
         assert_eq!(sanitize("a\rb\x07c\x7fd"), "abcd");
         assert_eq!(sanitize("a\nb"), "a b");
         assert_eq!(sanitize("a\u{9b}31mb"), "a31mb");
+    }
+
+    #[test]
+    fn strips_bidi_and_zero_width_format_chars() {
+        assert_eq!(sanitize("foo\u{202e}gnp.exe"), "foognp.exe");
+        assert_eq!(
+            sanitize("a\u{200b}b\u{2066}c\u{2069}d\u{feff}e\u{2028}f"),
+            "abcdef"
+        );
     }
 
     #[test]

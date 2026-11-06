@@ -23,13 +23,13 @@ pub(super) fn lines(app: &App, tab: ViewerTab, theme: &Theme) -> Vec<Line<'stati
             let mut lines = vec![
                 section("Image", theme),
                 kv("Reference", img.raw.to_string(), theme),
-                kv("Repository", img.image.repository.clone(), theme),
+                kv("Repository", img.image.repository.to_string(), theme),
             ];
             if let Some(tag) = &img.image.tag {
-                lines.push(kv("Tag", tag.clone(), theme));
+                lines.push(kv("Tag", tag.to_string(), theme));
             }
             if let Some(digest) = &img.image.digest {
-                lines.push(kv("Digest", digest.clone(), theme));
+                lines.push(kv("Digest", digest.to_string(), theme));
             }
             if img.image.tag.is_none() && img.image.digest.is_none() {
                 lines.push(kv("Tag", "latest (implicit)", theme));

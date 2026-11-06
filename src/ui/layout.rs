@@ -67,7 +67,8 @@ pub fn regions(
     }
     match mode {
         LayoutMode::Wide => {
-            let left_width = (area.width * 2 / 5).clamp(56, 80);
+            let left_width =
+                u16::try_from((u32::from(area.width) * 2 / 5).clamp(56, 80)).unwrap_or(80);
             let [left, viewer] =
                 Layout::horizontal([Constraint::Length(left_width), Constraint::Fill(1)])
                     .areas(body);
@@ -122,6 +123,13 @@ mod tests {
         assert_eq!(small.lists[0].1.height, 8);
         let big = regions(area, LayoutMode::Narrow, ResourceKind::Pods, 500, false);
         assert_eq!(big.lists[0].1.height, 43 * 2 / 5);
+    }
+
+    #[test]
+    fn huge_terminal_does_not_overflow() {
+        let area = Rect::new(0, 0, u16::MAX, 100);
+        let r = regions(area, LayoutMode::Wide, ResourceKind::Pods, 6, false);
+        assert_eq!(r.lists[0].1.width, 80);
     }
 
     #[test]

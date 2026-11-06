@@ -63,7 +63,12 @@ impl LogBuffer {
         self.follow
     }
 
-    pub fn set_follow(&mut self, on: bool) {
+    /// Turn follow mode on or off. Pausing keeps the lines currently shown in a
+    /// viewport of `viewport` rows on screen.
+    pub fn set_follow(&mut self, on: bool, viewport: usize) {
+        if self.follow && !on {
+            self.top = self.top(viewport);
+        }
         self.follow = on;
     }
 
@@ -128,10 +133,19 @@ mod tests {
     }
 
     #[test]
+    fn pausing_follow_keeps_current_view() {
+        let mut b = filled(10, 10);
+        b.set_follow(false, 3);
+        assert_eq!(view(&b, 3), ["7", "8", "9"]);
+        b.push(SafeText::from("10"));
+        assert_eq!(view(&b, 3), ["7", "8", "9"], "paused view does not move");
+    }
+
+    #[test]
     fn refollow_jumps_to_bottom() {
         let mut b = filled(10, 10);
         b.scroll_by(-5, 3);
-        b.set_follow(true);
+        b.set_follow(true, 3);
         assert_eq!(view(&b, 3), ["7", "8", "9"]);
     }
 
