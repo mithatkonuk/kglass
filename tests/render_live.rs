@@ -472,4 +472,5 @@ fn all_namespaces_header_and_titles() {
     let s = render_to_string(&mut a, 160, 48);
     assert!(s.lines().next().unwrap().contains("ns all"), "{s}");
     assert!(s.contains("all namespaces"), "pods subtitle\n{s}");
+    assert!(s.contains("namespace all"), "context box\n{s}");
 }

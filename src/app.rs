@@ -458,11 +458,12 @@ impl App {
                     match result {
                         Ok(names) => {
                             let current = self.snapshot.namespace.clone();
+                            let all_namespaces = self.all_namespaces;
                             picker.set_items(
                                 names
                                     .into_iter()
                                     .map(|name| PickerItem {
-                                        current: name == current,
+                                        current: !all_namespaces && name == current,
                                         name,
                                         detail: SafeText::default(),
                                     })
@@ -1210,7 +1211,8 @@ impl App {
                     return Vec::new();
                 };
                 let services = snap.services.iter().filter(|s| {
-                    !s.selector.is_empty()
+                    s.namespace == pod.namespace
+                        && !s.selector.is_empty()
                         && s.selector.iter().all(|(k, v)| pod.labels.get(k) == Some(v))
                 });
                 let claims = self
@@ -1732,6 +1734,18 @@ mod tests {
     }
 
     #[test]
+    fn pod_related_services_stay_in_the_pods_namespace() {
+        let mut snap = sample_snapshot();
+        for s in &mut snap.services {
+            s.namespace = "other-team".into();
+        }
+        let mut a = App::new(snap, AppOptions::default());
+        open(&mut a, '1', 3);
+        a.update(key(KeyCode::Right));
+        assert_eq!(a.related(), [ResourceRef::Pvc("data-billing-0".into())]);
+    }
+
+    #[test]
     fn enter_in_viewer_jumps_to_related_and_focuses_list() {
         let mut a = app();
         open(&mut a, '3', 2);
@@ -2248,6 +2262,17 @@ mod tests {
                 a.related(),
                 [ResourceRef::Pvc("payments/data-billing-0".into())]
             );
+        }
+
+        #[test]
+        fn namespace_picker_marks_nothing_current_under_all_namespaces() {
+            let mut a = live_all();
+            a.update(key(KeyCode::Char('n')));
+            a.update(data(DataEvent::Namespaces {
+                generation: 0,
+                result: Ok(vec!["shop".into()]),
+            }));
+            assert!(!a.picker.as_ref().unwrap().matches()[0].current);
         }
 
         #[test]

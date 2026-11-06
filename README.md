@@ -52,11 +52,11 @@ kglass --demo                 # built-in sample data, no cluster needed
 kglass -A                     # every namespace; rows are shown as namespace/name
 ```
 
-On large clusters `-A` lists everything every 10s (about 8s for ~700 pods in 40 namespaces in our tests), so prefer a namespace when you can.
+On large clusters `-A` lists everything every 10s, and one refresh can take several seconds, so prefer a single namespace when you can.
 
 ### Permissions
 
-Read-only access is enough: `get`/`list` on pods, services, persistentvolumeclaims, endpointslices and events, plus `get` on `pods/log`. PersistentVolumes and the namespace list are optional. Copy-ready Role/ClusterRole YAML is in [docs/rbac.md](docs/rbac.md); a test keeps it in sync with the code.
+Read-only access is enough: `get`/`list` on pods, services, persistentvolumeclaims, endpointslices and events, plus `get` on `pods/log`. PersistentVolumes and the namespace list are optional. Copy-ready Role/ClusterRole YAML is in [docs/rbac.md](docs/rbac.md); a test keeps it in sync with the permission list the code declares.
 
 ### Troubleshooting
 

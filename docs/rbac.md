@@ -1,8 +1,8 @@
 # Permissions (RBAC)
 
-Kubeglass is **read-only**. It only ever calls `get`, `list` and `pods/log`, and it **never reads Secrets**. If you can already run `kubectl get pods` and `kubectl logs` in a namespace, you most likely have everything it needs.
+Kubeglass is **read-only**. It only ever calls `get`, `list`, `pods/log` and the API server's `/version` endpoint (which every authenticated user can read by default), and it **never reads Secrets**. If you can already run `kubectl get pods` and `kubectl logs` in a namespace, you most likely have everything it needs.
 
-This page is for cluster admins who want to grant the minimum. A test (`tests/rbac_doc.rs`) checks that the YAML below matches exactly what the code uses.
+This page is for cluster admins who want to grant the minimum. A test (`tests/rbac_doc.rs`) checks that the YAML below grants exactly the permission list the code declares (`fetch::PERMISSIONS`). That list is maintained by hand next to the API calls in `src/cluster/fetch.rs`.
 
 ## Namespace access (required)
 

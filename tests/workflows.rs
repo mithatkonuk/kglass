@@ -49,4 +49,8 @@ fn release_builds_four_targets_on_version_tags() {
     );
     assert!(text.contains("--locked --release"), "reproducible builds");
     assert!(text.contains("shasum -a 256"), "checksums are published");
+    assert!(
+        text.contains("does not match Cargo.toml version"),
+        "tag/version check"
+    );
 }

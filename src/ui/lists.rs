@@ -410,7 +410,14 @@ pub fn draw_context(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
         Span::styled("context ", theme.muted),
         Span::styled(snap.context.as_str(), theme.title),
         Span::styled("  namespace ", theme.muted),
-        Span::styled(snap.namespace.as_str(), theme.title),
+        Span::styled(
+            if app.all_namespaces {
+                "all"
+            } else {
+                snap.namespace.as_str()
+            },
+            theme.title,
+        ),
     ];
     if !snap.user.as_str().is_empty() {
         spans.push(Span::styled("  user ", theme.muted));
