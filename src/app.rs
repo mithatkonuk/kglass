@@ -127,6 +127,7 @@ pub struct App {
     pub size: (u16, u16),
     fake_logs: FakeLogs,
     ticks: u64,
+    last_list: ResourceKind,
 }
 
 impl App {
@@ -158,6 +159,7 @@ impl App {
             size: (0, 0),
             fake_logs: FakeLogs::new(),
             ticks: 0,
+            last_list: ResourceKind::Pods,
         };
         for kind in ResourceKind::ALL {
             let len = app.row_count(kind);
@@ -257,6 +259,18 @@ impl App {
     /// Focus a pane (also used by mouse handling).
     pub fn set_focus(&mut self, focus: Focus) {
         self.focus = focus;
+        if let Focus::List(kind) = focus {
+            self.last_list = kind;
+        }
+    }
+
+    /// The list shown in the narrow layout: the focused list, or the last one
+    /// focused while the viewer has focus.
+    pub fn visible_list(&self) -> ResourceKind {
+        match self.focus {
+            Focus::List(kind) => kind,
+            Focus::Viewer => self.last_list,
+        }
     }
 
     fn restart_logs(&mut self) {
@@ -321,7 +335,7 @@ impl App {
             KeyCode::Char('c') => self.cycle_container(),
             KeyCode::Char(d @ '1'..='4') => {
                 if let Some(kind) = ResourceKind::from_number(d as u8 - b'0') {
-                    self.focus = Focus::List(kind);
+                    self.set_focus(Focus::List(kind));
                 }
             }
             _ => {}
@@ -365,7 +379,7 @@ impl App {
             .position(|f| *f == self.focus)
             .unwrap_or(0);
         let n = FOCUS_ORDER.len() as isize;
-        self.focus = FOCUS_ORDER[(pos as isize + step).rem_euclid(n) as usize];
+        self.set_focus(FOCUS_ORDER[(pos as isize + step).rem_euclid(n) as usize]);
     }
 
     /// Switch to viewer tab `idx` (ignored when out of range).
