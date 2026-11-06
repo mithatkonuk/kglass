@@ -228,12 +228,29 @@ Testing follows plan §12: unit tests for row formatting, image dedup, relations
     - Storage shows only PVs claimed from the current namespace.
     - Kubeconfig problems exit before the TUI with a clear message.
     - `-A` is rejected until phase 3.
-- **Phase 3 backlog:**
+- 2026-11-06: **Phase 3 done: viewer polish** (plan [`plan-phase3.md`](plan-phase3.md)).
+  - **What's new:**
+    - JSON/ECS logs shown as readable lines (`J` shows raw)
+    - log search (`/` in the viewer)
+    - previous-container logs (`p`)
+    - jumping to related resources (viewer `↑↓` + `Enter`)
+    - "first 5000" notes on truncated lists
+    - PVC `Terminating`
+    - auth help with Rancher-specific advice
+  - **Tests:** 228 passing, with fmt and clippy clean.
+  - **Real cluster:** checked on the dev cluster, including real ECS logs from a Spring service. Previous logs were only checked on their no-restarts path, because no pod in the namespace had restarted.
+  - **Independent review:** no high-severity findings. Every medium and low finding was fixed with a test.
+  - **Decisions:**
+    - `-A` moved to phase 4.
+    - Ghost rows dropped; the "no longer present" banner covers the case.
+    - Search matches the raw line, ignoring ASCII case.
+- **Phase 4 (hardening & beta) backlog:**
   - `-A/--all-namespaces`, which needs namespace-qualified `ResourceRef`s
-  - a visible "showing first 5000" note when a list is truncated (lists are currently cut silently at 5000)
-  - log search, previous-container logs, and pretty-printing JSON log lines
-  - ghost rows for deleted resources
-  - Enter-to-follow relationships (service → pod)
-  - a full-screen startup auth screen
-  - events for more kinds and PVC `Terminating`
-- **Next:** write `docs/plan-phase3.md`.
+  - CI (fmt, clippy, test on macOS and Linux) and release binaries
+  - `docs/rbac.md` with a minimal read-only Role/ClusterRole
+  - testing on more terminals: iTerm2, Terminal.app, a Linux terminal
+  - README screenshots or GIF
+  - a GitHub repository, plus SECURITY.md / CONTRIBUTING.md
+  - optional: log search over the formatted text, and events for more kinds
+- **Release 2** (write actions) needs its own safety design before any code.
+- **Next:** write `docs/plan-phase4.md`.
