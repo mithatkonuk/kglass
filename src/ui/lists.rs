@@ -196,12 +196,23 @@ fn rows(app: &App, kind: ResourceKind, mode: LayoutMode, theme: &Theme) -> Vec<V
 }
 
 fn pane_title(app: &App, kind: ResourceKind) -> String {
-    format!(
-        "[{}]─{} {}",
-        kind.number(),
-        kind.title(),
-        app.row_count(kind)
-    )
+    let filter = app.filter(kind);
+    if filter.is_empty() {
+        format!(
+            "[{}]─{} {}",
+            kind.number(),
+            kind.title(),
+            app.row_count(kind)
+        )
+    } else {
+        format!(
+            "[{}]─{} {}/{} · filter: {filter}",
+            kind.number(),
+            kind.title(),
+            app.row_count(kind),
+            app.total_rows(kind)
+        )
+    }
 }
 
 fn pane_subtitle(app: &App, kind: ResourceKind) -> String {

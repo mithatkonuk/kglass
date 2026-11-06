@@ -72,7 +72,7 @@ pub async fn render_live_frame(
     let deadline = Instant::now() + std::time::Duration::from_secs(4);
     while Instant::now() < deadline {
         for c in app.take_commands() {
-            executor.run(c);
+            executor.run(c).await;
         }
         if let Ok(Some(ev)) =
             tokio::time::timeout(std::time::Duration::from_millis(200), rx.recv()).await

@@ -6,6 +6,7 @@ pub mod help;
 pub mod hits;
 pub mod layout;
 pub mod lists;
+pub mod picker;
 pub mod theme;
 pub mod viewer;
 
@@ -34,7 +35,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     let shown = app.visible_list();
     let r = regions(area, mode, shown, app.row_count(shown), app.zoom);
     header::draw(frame, r.header, app, mode, &theme);
-    footer::draw(frame, r.footer, mode, &theme);
+    footer::draw(frame, r.footer, app, mode, &theme);
     if let Some(context) = r.context {
         lists::draw_context(frame, context, app, &theme);
     }
@@ -47,5 +48,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     viewer::draw(frame, r.viewer, app, &theme);
     if app.help {
         help::draw(frame, area, &theme);
+    }
+    if let Some(picker) = &app.picker {
+        picker::draw(frame, area, picker, &theme);
     }
 }

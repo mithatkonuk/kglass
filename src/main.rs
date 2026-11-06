@@ -7,7 +7,7 @@ use std::process::ExitCode;
 use clap::Parser;
 use kglass::app::{App, LiveTarget};
 use kglass::cli::Args;
-use kglass::cluster::config::{client_for, load_kubeconfig, resolve};
+use kglass::cluster::config::{client_for, contexts, load_kubeconfig, resolve};
 use kglass::fake::sample_snapshot;
 use kglass::runtime;
 use kglass::text::SafeText;
@@ -26,8 +26,13 @@ async fn main() -> ExitCode {
     }
     let options = args.to_options(std::env::var("NO_COLOR").ok().as_deref());
 
-    let (app, client, namespace) = if args.demo {
-        (App::new(sample_snapshot(), options), None, String::new())
+    let (app, client, namespace, kubeconfig) = if args.demo {
+        (
+            App::new(sample_snapshot(), options),
+            None,
+            String::new(),
+            None,
+        )
     } else {
         let env = std::env::var("KUBECONFIG").ok();
         let home = std::env::var_os("HOME").map(PathBuf::from);
@@ -48,14 +53,15 @@ async fn main() -> ExitCode {
                 return ExitCode::FAILURE;
             }
         };
-        let app = App::new_live(
+        let mut app = App::new_live(
             LiveTarget {
                 context: SafeText::from(target.context.as_str()),
                 namespace: SafeText::from(target.namespace.as_str()),
             },
             options.plain,
         );
-        (app, Some(client), target.namespace)
+        app.set_contexts(contexts(&target.kubeconfig));
+        (app, Some(client), target.namespace, Some(target.kubeconfig))
     };
 
     // `ratatui::init` enters raw mode and the alternate screen and installs a panic
@@ -68,7 +74,7 @@ async fn main() -> ExitCode {
     }));
 
     let result = match execute!(stdout(), EnableMouseCapture) {
-        Ok(()) => runtime::run(&mut terminal, app, client, namespace).await,
+        Ok(()) => runtime::run(&mut terminal, app, client, namespace, kubeconfig).await,
         Err(e) => Err(e.into()),
     };
 

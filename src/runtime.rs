@@ -12,9 +12,11 @@ use tokio::task::JoinHandle;
 use tokio::time::MissedTickBehavior;
 
 use crate::app::{App, AppEvent, DataEvent, LOG_TAIL};
+use crate::cluster::config::{Kubeconfig, Target, client_for};
 use crate::cluster::convert::Timestamp;
-use crate::cluster::fetch;
+use crate::cluster::fetch::{self, FetchError};
 use crate::command::Command;
+use crate::text::SafeText;
 use crate::ui;
 
 /// Interval between `AppEvent::Tick`s.
@@ -40,6 +42,10 @@ pub struct Executor {
     namespace: String,
     tx: mpsc::Sender<DataEvent>,
     log_task: Option<JoinHandle<()>>,
+    /// Needed to build clients for other contexts (`SwitchTarget`).
+    kubeconfig: Option<Kubeconfig>,
+    /// Why the last target switch produced no client; reported on refresh.
+    switch_error: Option<FetchError>,
 }
 
 impl Executor {
@@ -49,16 +55,36 @@ impl Executor {
             namespace,
             tx,
             log_task: None,
+            kubeconfig: None,
+            switch_error: None,
         }
     }
 
-    pub fn run(&mut self, command: Command) {
+    pub fn with_kubeconfig(mut self, kubeconfig: Kubeconfig) -> Self {
+        self.kubeconfig = Some(kubeconfig);
+        self
+    }
+
+    pub async fn run(&mut self, command: Command) {
+        if let Command::SwitchTarget { context, namespace } = command {
+            self.switch_target(context.to_string(), namespace.to_string())
+                .await;
+            return;
+        }
         let Some(client) = self.client.clone() else {
+            self.report_switch_error(&command).await;
             return;
         };
         let tx = self.tx.clone();
         let ns = self.namespace.clone();
         match command {
+            Command::SwitchTarget { .. } => unreachable!("handled above"),
+            Command::FetchNamespaces => {
+                tokio::spawn(async move {
+                    let result = fetch::namespaces(&client).await;
+                    let _ = tx.send(DataEvent::Namespaces(result)).await;
+                });
+            }
             Command::Refresh { generation } => {
                 let version_client = client.clone();
                 let version_tx = tx.clone();
@@ -130,6 +156,55 @@ impl Executor {
         }
     }
 
+    async fn switch_target(&mut self, context: String, namespace: String) {
+        self.stop_logs();
+        self.namespace = namespace.clone();
+        self.switch_error = None;
+        let Some(kubeconfig) = self.kubeconfig.clone() else {
+            return;
+        };
+        let target = Target {
+            kubeconfig,
+            context,
+            namespace,
+        };
+        match client_for(&target).await {
+            Ok(client) => self.client = Some(client),
+            Err(e) => {
+                self.client = None;
+                self.switch_error = Some(FetchError::Unreachable(SafeText::from(e.to_string())));
+            }
+        }
+    }
+
+    /// After a failed switch, answer refreshes with the error so panes do not wait forever.
+    async fn report_switch_error(&self, command: &Command) {
+        let (Some(error), Command::Refresh { generation }) = (&self.switch_error, command) else {
+            return;
+        };
+        let lists = fetch::Lists {
+            pods: Err(error.clone()),
+            services: Err(error.clone()),
+            storage: Err(error.clone()),
+            storage_partial: None,
+            events: Err(error.clone()),
+        };
+        let _ = self
+            .tx
+            .send(DataEvent::Version {
+                generation: *generation,
+                result: Err(error.clone()),
+            })
+            .await;
+        let _ = self
+            .tx
+            .send(DataEvent::Lists {
+                generation: *generation,
+                lists: Box::new(lists),
+            })
+            .await;
+    }
+
     fn stop_logs(&mut self) {
         if let Some(task) = self.log_task.take() {
             task.abort();
@@ -175,9 +250,13 @@ pub async fn run(
     mut app: App,
     client: Option<Client>,
     namespace: String,
+    kubeconfig: Option<Kubeconfig>,
 ) -> color_eyre::Result<()> {
     let (data_tx, mut data_rx) = mpsc::channel(DATA_CHANNEL);
     let mut executor = Executor::new(client, namespace, data_tx);
+    if let Some(kc) = kubeconfig {
+        executor = executor.with_kubeconfig(kc);
+    }
 
     let (input_tx, mut input_rx) = mpsc::unbounded_channel();
     // crossterm's `read` blocks, so it gets its own thread. It ends with the process.
@@ -196,7 +275,7 @@ pub async fn run(
 
     while !app.quit {
         for command in app.take_commands() {
-            executor.run(command);
+            executor.run(command).await;
         }
         terminal.draw(|frame| ui::draw(frame, &mut app))?;
         tokio::select! {
@@ -242,7 +321,7 @@ mod tests {
     #[tokio::test]
     async fn refresh_sends_lists_and_version() {
         let (mut ex, mut rx) = executor();
-        ex.run(Command::Refresh { generation: 3 });
+        ex.run(Command::Refresh { generation: 3 }).await;
         let mut got_lists = false;
         let mut got_version = false;
         for _ in 0..2 {
@@ -274,7 +353,8 @@ mod tests {
             session: 9,
             pod: "api-1".into(),
             container: "api".into(),
-        });
+        })
+        .await;
         let mut lines = Vec::new();
         loop {
             match next(&mut rx).await {
@@ -296,9 +376,10 @@ mod tests {
             session: 1,
             pod: "api-1".into(),
             container: "api".into(),
-        });
+        })
+        .await;
         assert!(ex.log_task.is_some());
-        ex.run(Command::StopLogs);
+        ex.run(Command::StopLogs).await;
         assert!(ex.log_task.is_none());
     }
 
@@ -309,7 +390,8 @@ mod tests {
         ex.run(Command::FetchYaml {
             generation: 0,
             target: target.clone(),
-        });
+        })
+        .await;
         match next(&mut rx).await {
             DataEvent::Yaml {
                 generation: 0,
@@ -323,11 +405,71 @@ mod tests {
         }
     }
 
+    fn fixture_kubeconfig() -> kube::config::Kubeconfig {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/kubeconfig-b.yaml");
+        kube::config::Kubeconfig::read_from(path).unwrap()
+    }
+
+    #[tokio::test]
+    async fn namespaces_listed_for_picker() {
+        let (mut ex, mut rx) = executor();
+        ex.run(Command::FetchNamespaces).await;
+        match next(&mut rx).await {
+            DataEvent::Namespaces(Ok(names)) => assert_eq!(names.len(), 2),
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn switch_target_rebuilds_client_for_new_namespace() {
+        let (tx, _rx) = mpsc::channel(4);
+        let mut ex = Executor::new(None, "a".into(), tx).with_kubeconfig(fixture_kubeconfig());
+        ex.run(Command::SwitchTarget {
+            context: "kind-local".into(),
+            namespace: "team-b".into(),
+        })
+        .await;
+        assert_eq!(ex.namespace, "team-b");
+        assert_eq!(
+            ex.client.as_ref().map(Client::default_namespace),
+            Some("team-b")
+        );
+    }
+
+    #[tokio::test]
+    async fn failed_switch_reports_error_on_refresh() {
+        let (tx, mut rx) = mpsc::channel(8);
+        let mut ex = Executor::new(None, "a".into(), tx).with_kubeconfig(fixture_kubeconfig());
+        ex.run(Command::SwitchTarget {
+            context: "nope".into(),
+            namespace: "x".into(),
+        })
+        .await;
+        ex.run(Command::Refresh { generation: 2 }).await;
+        let mut saw_version_error = false;
+        let mut saw_list_error = false;
+        for _ in 0..2 {
+            match next(&mut rx).await {
+                DataEvent::Version {
+                    generation: 2,
+                    result: Err(_),
+                } => saw_version_error = true,
+                DataEvent::Lists {
+                    generation: 2,
+                    lists,
+                } => saw_list_error = lists.pods.is_err() && lists.storage.is_err(),
+                other => panic!("unexpected {other:?}"),
+            }
+        }
+        assert!(saw_version_error && saw_list_error);
+    }
+
     #[tokio::test]
     async fn sample_mode_executor_ignores_commands() {
         let (tx, mut rx) = mpsc::channel(4);
         let mut ex = Executor::new(None, NS.to_string(), tx);
-        ex.run(Command::Refresh { generation: 0 });
+        ex.run(Command::Refresh { generation: 0 }).await;
         assert!(rx.try_recv().is_err());
     }
 

@@ -176,3 +176,112 @@ fn live_context_box_without_user() {
     );
     assert!(!s.contains("user "), "{s}");
 }
+
+fn with_contexts(mut a: kglass::app::App) -> kglass::app::App {
+    use kglass::cluster::config::ContextInfo;
+    let info = |name: &str, hint: &'static str| ContextInfo {
+        name: name.into(),
+        cluster: name.into(),
+        server_host: "k8s.example.test".into(),
+        namespace: None,
+        hint,
+    };
+    a.set_contexts(vec![
+        info("dev-01", "rancher"),
+        info("dev-02", "rancher"),
+        info("kind-local", "local"),
+    ]);
+    a
+}
+
+#[test]
+fn context_picker_overlay() {
+    let mut a = with_contexts(live_app());
+    a.update(key(KeyCode::Char('x')));
+    let s = render_to_string(&mut a, 160, 48);
+    for needle in [
+        "[x]─Switch context",
+        "filter › █",
+        "● dev-01",
+        "○ kind-local",
+        "rancher · k8s.example.test",
+        "3 of 3 contexts · from kubeconfig · enter switch · esc cancel",
+    ] {
+        assert!(s.contains(needle), "missing {needle:?}\n{s}");
+    }
+    for c in "kind".chars() {
+        a.update(key(KeyCode::Char(c)));
+    }
+    let s = render_to_string(&mut a, 160, 48);
+    assert!(
+        s.contains("filter › kind█") && s.contains("1 of 3 contexts"),
+        "{s}"
+    );
+}
+
+#[test]
+fn namespace_picker_loading_and_error() {
+    let mut a = live_app();
+    a.update(key(KeyCode::Char('n')));
+    let s = render_to_string(&mut a, 160, 48);
+    assert!(
+        s.contains("[n]─Switch namespace") && s.contains("loading namespaces…"),
+        "{s}"
+    );
+    a.update(AppEvent::Data(DataEvent::Namespaces(Err(
+        FetchError::Timeout,
+    ))));
+    let s = render_to_string(&mut a, 160, 48);
+    assert!(
+        s.contains("✕ cannot list namespaces: timed out after 15s"),
+        "{s}"
+    );
+    assert!(s.contains("type a namespace name and press enter"), "{s}");
+}
+
+#[test]
+fn picker_fits_narrow_minimum() {
+    let mut a = with_contexts(live_app());
+    a.update(key(KeyCode::Char('x')));
+    let s = render_to_string(&mut a, 60, 16);
+    assert!(
+        s.contains("Switch context") && s.contains("dev-01"),
+        "{s}"
+    );
+}
+
+#[test]
+fn filter_shown_in_title_and_footer() {
+    let mut a = live_app();
+    a.update(lists_event(sample_lists()));
+    a.update(key(KeyCode::Char('/')));
+    for c in "bill".chars() {
+        a.update(key(KeyCode::Char(c)));
+    }
+    let s = render_to_string(&mut a, 160, 48);
+    assert!(s.contains("[1]─Pods 1/6 · filter: bill"), "{s}");
+    let footer = s.lines().last().unwrap();
+    assert!(
+        footer.contains("filter pods › bill█") && footer.contains("enter done · esc clear"),
+        "{footer}"
+    );
+    a.update(key(KeyCode::Enter));
+    let s = render_to_string(&mut a, 160, 48);
+    assert!(
+        s.contains("[1]─Pods 1/6 · filter: bill"),
+        "filter stays after enter\n{s}"
+    );
+}
+
+#[test]
+fn live_footer_lists_cluster_keys() {
+    let mut a = live_app();
+    let footer = render_to_string(&mut a, 160, 48)
+        .lines()
+        .last()
+        .unwrap()
+        .to_string();
+    for needle in ["x context", "n namespace", "/ filter", "r refresh"] {
+        assert!(footer.contains(needle), "missing {needle:?}: {footer}");
+    }
+}

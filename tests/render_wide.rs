@@ -136,7 +136,14 @@ fn help_overlay_lists_keys() {
     let mut a = app();
     a.update(key(ratatui::crossterm::event::KeyCode::Char('?')));
     let s = render_to_string(&mut a, 160, 48);
-    for needle in ["Help", "zoom viewer", "next container", "toggle follow"] {
+    for needle in [
+        "Help",
+        "zoom viewer",
+        "next container",
+        "follow logs",
+        "switch context / namespace",
+        "filter the list",
+    ] {
         assert!(s.contains(needle), "missing {needle:?}\n{s}");
     }
 }

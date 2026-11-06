@@ -8,6 +8,7 @@ use ratatui::crossterm::event::{
     KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 
+use crate::cluster::config::ContextInfo;
 use crate::cluster::fetch::{FetchError, Lists};
 use crate::command::Command;
 use crate::derive::images_in_use;
@@ -15,7 +16,7 @@ use crate::fake::FakeLogs;
 use crate::model::{
     ClusterSnapshot, ImageUsage, ResourceKind, ResourceRef, StorageItem, StorageKind,
 };
-use crate::state::{ListCursor, LogBuffer};
+use crate::state::{ListCursor, LogBuffer, Picker, PickerItem, PickerKind};
 use crate::text::SafeText;
 use crate::ui::hits::{Hit, HitMap};
 
@@ -66,6 +67,7 @@ pub enum DataEvent {
         target: ResourceRef,
         result: Result<String, FetchError>,
     },
+    Namespaces(Result<Vec<SafeText>, FetchError>),
 }
 
 /// Where the data comes from.
@@ -220,6 +222,13 @@ pub struct App {
     pub log_state: LogState,
     /// Shown instead of the viewer content, e.g. when the selection was deleted.
     pub viewer_notice: Option<SafeText>,
+    /// Open context or namespace picker; captures keys while open.
+    pub picker: Option<Picker>,
+    /// List whose filter is being typed; captures keys while set.
+    pub filter_editing: Option<ResourceKind>,
+    /// Name filters per list (case-insensitive substring), indexed by `ResourceKind::index()`.
+    filters: [String; 4],
+    contexts: Vec<ContextInfo>,
     source: Source,
     commands: Vec<Command>,
     /// Bumped when the target (context/namespace) changes.
@@ -265,6 +274,10 @@ impl App {
             panes: std::array::from_fn(|_| PaneStatus::Ready),
             log_state: LogState::Idle,
             viewer_notice: None,
+            picker: None,
+            filter_editing: None,
+            filters: Default::default(),
+            contexts: Vec::new(),
             source: Source::Sample,
             commands: Vec::new(),
             generation: 0,
@@ -395,8 +408,149 @@ impl App {
                     };
                 }
             }
+            DataEvent::Namespaces(result) => {
+                if let Some(picker) = &mut self.picker
+                    && picker.kind == PickerKind::Namespace
+                {
+                    match result {
+                        Ok(names) => {
+                            let current = self.snapshot.namespace.clone();
+                            picker.set_items(
+                                names
+                                    .into_iter()
+                                    .map(|name| PickerItem {
+                                        current: name == current,
+                                        name,
+                                        detail: SafeText::default(),
+                                    })
+                                    .collect(),
+                            );
+                        }
+                        Err(e) => picker.set_error(e),
+                    }
+                }
+            }
             _ => {}
         }
+    }
+
+    fn open_context_picker(&mut self) {
+        if !self.is_live() || self.contexts.is_empty() {
+            return;
+        }
+        let current = self.snapshot.context.clone();
+        let mut picker = Picker::new(PickerKind::Context);
+        picker.set_items(
+            self.contexts
+                .iter()
+                .map(|c| PickerItem {
+                    name: c.name.clone(),
+                    detail: SafeText::from(if c.hint.is_empty() {
+                        c.server_host.to_string()
+                    } else {
+                        format!("{} · {}", c.hint, c.server_host)
+                    }),
+                    current: c.name == current,
+                })
+                .collect(),
+        );
+        self.picker = Some(picker);
+    }
+
+    fn open_namespace_picker(&mut self) {
+        if !self.is_live() {
+            return;
+        }
+        self.picker = Some(Picker::new(PickerKind::Namespace));
+        self.commands.push(Command::FetchNamespaces);
+    }
+
+    fn on_picker_key(&mut self, key: KeyEvent) {
+        let Some(picker) = &mut self.picker else {
+            return;
+        };
+        match key.code {
+            KeyCode::Esc => self.picker = None,
+            KeyCode::Up => picker.move_by(-1),
+            KeyCode::Down => picker.move_by(1),
+            KeyCode::Backspace => picker.backspace(),
+            KeyCode::Char(c) => picker.type_char(c),
+            KeyCode::Enter => {
+                let (kind, chosen) = (picker.kind, picker.chosen());
+                let Some(chosen) = chosen else {
+                    return;
+                };
+                let (context, namespace) = match kind {
+                    PickerKind::Context => {
+                        let namespace = self
+                            .contexts
+                            .iter()
+                            .find(|c| c.name == chosen)
+                            .and_then(|c| c.namespace.clone())
+                            .unwrap_or_else(|| SafeText::from("default"));
+                        (chosen, namespace)
+                    }
+                    PickerKind::Namespace => (self.snapshot.context.clone(), chosen),
+                };
+                self.switch_target(context, namespace);
+            }
+            _ => {}
+        }
+    }
+
+    fn on_filter_key(&mut self, kind: ResourceKind, key: KeyEvent) {
+        let filter = &mut self.filters[kind.index()];
+        match key.code {
+            KeyCode::Enter => self.filter_editing = None,
+            KeyCode::Esc => {
+                filter.clear();
+                self.filter_editing = None;
+            }
+            KeyCode::Backspace => {
+                filter.pop();
+            }
+            KeyCode::Char(c) => filter.push_str(&crate::text::sanitize(&c.to_string())),
+            _ => return,
+        }
+        let len = self.row_count(kind);
+        let cursor = &mut self.cursors[kind.index()];
+        cursor.set_len(len);
+        cursor.select(0);
+    }
+
+    /// Show another context/namespace for this session. Clears all data, stops
+    /// the log stream and starts a new generation so late answers are dropped.
+    fn switch_target(&mut self, context: SafeText, namespace: SafeText) {
+        self.picker = None;
+        self.generation += 1;
+        self.log_session += 1;
+        if self.log_state == LogState::Streaming {
+            self.commands.push(Command::StopLogs);
+        }
+        self.log_state = LogState::Idle;
+        self.logs.clear();
+        self.snapshot.context = context.clone();
+        self.snapshot.namespace = namespace.clone();
+        self.snapshot.pods.clear();
+        self.snapshot.services.clear();
+        self.snapshot.storage.clear();
+        self.snapshot.events.clear();
+        self.images.clear();
+        self.selected = None;
+        self.viewer_notice = None;
+        self.yaml = None;
+        self.tab = 0;
+        self.container = 0;
+        self.filters = Default::default();
+        self.cursors = Default::default();
+        self.panes = std::array::from_fn(|_| PaneStatus::Loading {
+            since_tick: self.ticks,
+        });
+        self.connection = Connection::Connecting;
+        self.commands
+            .push(Command::SwitchTarget { context, namespace });
+        self.refresh_in_flight = false;
+        self.request_refresh();
     }
 
     fn apply_lists(&mut self, lists: Lists) {
@@ -443,9 +597,7 @@ impl App {
         for (kind, previous) in ResourceKind::ALL.into_iter().zip(remembered) {
             let len = self.row_count(kind);
             self.cursors[kind.index()].set_len(len);
-            if let Some(idx) = previous
-                .and_then(|r| (0..len).find(|i| self.row_ref(kind, *i).as_ref() == Some(&r)))
-            {
+            if let Some(idx) = previous.and_then(|r| self.find_row(kind, &r)) {
                 self.cursors[kind.index()].select(idx);
             }
         }
@@ -527,7 +679,8 @@ impl App {
         });
     }
 
-    pub fn row_count(&self, kind: ResourceKind) -> usize {
+    /// Rows in a list before filtering.
+    pub fn total_rows(&self, kind: ResourceKind) -> usize {
         match kind {
             ResourceKind::Pods => self.snapshot.pods.len(),
             ResourceKind::Images => self.images.len(),
@@ -542,27 +695,84 @@ impl App {
         of(StorageKind::Pvc).chain(of(StorageKind::Pv))
     }
 
+    /// Names in display order, used for filtering.
+    fn row_names(&self, kind: ResourceKind) -> Vec<&str> {
+        match kind {
+            ResourceKind::Pods => self.snapshot.pods.iter().map(|p| p.name.as_str()).collect(),
+            ResourceKind::Images => self.images.iter().map(|i| i.raw.as_str()).collect(),
+            ResourceKind::Services => self
+                .snapshot
+                .services
+                .iter()
+                .map(|s| s.name.as_str())
+                .collect(),
+            ResourceKind::Storage => self.storage_rows().map(|s| s.name.as_str()).collect(),
+        }
+    }
+
+    /// Display-order indices of the rows that pass the list's filter.
+    pub fn visible_rows(&self, kind: ResourceKind) -> Vec<usize> {
+        let filter = self.filters[kind.index()].to_lowercase();
+        if filter.is_empty() {
+            return (0..self.total_rows(kind)).collect();
+        }
+        self.row_names(kind)
+            .iter()
+            .enumerate()
+            .filter(|(_, name)| name.to_lowercase().contains(&filter))
+            .map(|(i, _)| i)
+            .collect()
+    }
+
+    /// Rows shown in a list (after filtering).
+    pub fn row_count(&self, kind: ResourceKind) -> usize {
+        self.visible_rows(kind).len()
+    }
+
+    /// The resource on visible row `idx` (after filtering).
     pub fn row_ref(&self, kind: ResourceKind, idx: usize) -> Option<ResourceRef> {
+        let row = *self.visible_rows(kind).get(idx)?;
+        self.display_ref(kind, row)
+    }
+
+    /// The resource at display-order index `row` (before filtering).
+    pub fn display_ref(&self, kind: ResourceKind, row: usize) -> Option<ResourceRef> {
         match kind {
             ResourceKind::Pods => self
                 .snapshot
                 .pods
-                .get(idx)
+                .get(row)
                 .map(|p| ResourceRef::Pod(p.name.clone())),
             ResourceKind::Images => self
                 .images
-                .get(idx)
+                .get(row)
                 .map(|i| ResourceRef::Image(i.raw.clone())),
             ResourceKind::Services => self
                 .snapshot
                 .services
-                .get(idx)
+                .get(row)
                 .map(|s| ResourceRef::Service(s.name.clone())),
-            ResourceKind::Storage => self.storage_rows().nth(idx).map(|s| match s.kind {
+            ResourceKind::Storage => self.storage_rows().nth(row).map(|s| match s.kind {
                 StorageKind::Pvc => ResourceRef::Pvc(s.name.clone()),
                 StorageKind::Pv => ResourceRef::Pv(s.name.clone()),
             }),
         }
+    }
+
+    /// Visible row showing `r`, if any.
+    fn find_row(&self, kind: ResourceKind, r: &ResourceRef) -> Option<usize> {
+        self.visible_rows(kind)
+            .iter()
+            .position(|&row| self.display_ref(kind, row).as_ref() == Some(r))
+    }
+
+    pub fn filter(&self, kind: ResourceKind) -> &str {
+        &self.filters[kind.index()]
+    }
+
+    /// Contexts offered by the `x` picker (from kubeconfig).
+    pub fn set_contexts(&mut self, contexts: Vec<ContextInfo>) {
+        self.contexts = contexts;
     }
 
     pub fn current_tabs(&self) -> &'static [ViewerTab] {
@@ -708,6 +918,14 @@ impl App {
             self.quit = true;
             return;
         }
+        if self.picker.is_some() {
+            self.on_picker_key(key);
+            return;
+        }
+        if let Some(kind) = self.filter_editing {
+            self.on_filter_key(kind, key);
+            return;
+        }
         // Only plain (or shifted) keys are bound; Ctrl/Alt/Super combinations are ignored.
         if key
             .modifiers
@@ -744,6 +962,13 @@ impl App {
             }
             KeyCode::Char('c') => self.cycle_container(),
             KeyCode::Char('r') => self.request_refresh(),
+            KeyCode::Char('/') => {
+                if let Focus::List(kind) = self.focus {
+                    self.filter_editing = Some(kind);
+                }
+            }
+            KeyCode::Char('x') => self.open_context_picker(),
+            KeyCode::Char('n') => self.open_namespace_picker(),
             KeyCode::Char(d @ '1'..='4') => {
                 if let Some(kind) = ResourceKind::from_number(d as u8 - b'0') {
                     self.set_focus(Focus::List(kind));
@@ -794,7 +1019,7 @@ impl App {
 
     /// Mouse input, resolved against the regions recorded by the last frame.
     fn on_mouse(&mut self, mouse: MouseEvent) {
-        if self.help {
+        if self.help || self.picker.is_some() {
             return;
         }
         let Some(hit) = self.hits.hit(mouse.column, mouse.row) else {
@@ -1060,6 +1285,48 @@ mod tests {
     }
 
     #[test]
+    fn slash_filters_focused_list() {
+        let mut a = app();
+        a.update(key(KeyCode::Char('/')));
+        assert_eq!(a.filter_editing, Some(ResourceKind::Pods));
+        for c in "BILL".chars() {
+            a.update(key(KeyCode::Char(c)));
+        }
+        a.update(key(KeyCode::Enter));
+        assert_eq!(a.filter_editing, None);
+        assert_eq!(a.row_count(ResourceKind::Pods), 1);
+        assert_eq!(a.row_ref(ResourceKind::Pods, 0), pod("billing-0"));
+        assert_eq!(a.cursors[0].selected(), Some(0));
+        a.update(key(KeyCode::Enter));
+        assert_eq!(a.selected, pod("billing-0"));
+    }
+
+    #[test]
+    fn filter_typing_does_not_trigger_keys() {
+        let mut a = app();
+        a.update(key(KeyCode::Char('/')));
+        for c in "q3z".chars() {
+            a.update(key(KeyCode::Char(c)));
+        }
+        assert!(!a.quit && !a.zoom);
+        assert_eq!(a.filter(ResourceKind::Pods), "q3z");
+        assert_eq!(a.row_count(ResourceKind::Pods), 0);
+        a.update(key(KeyCode::Backspace));
+        assert_eq!(a.filter(ResourceKind::Pods), "q3");
+    }
+
+    #[test]
+    fn esc_clears_filter() {
+        let mut a = app();
+        a.update(key(KeyCode::Char('/')));
+        a.update(key(KeyCode::Char('x')));
+        a.update(key(KeyCode::Esc));
+        assert_eq!(a.filter(ResourceKind::Pods), "");
+        assert_eq!(a.row_count(ResourceKind::Pods), 6);
+        assert_eq!(a.filter_editing, None);
+    }
+
+    #[test]
     fn esc_leaves_zoom() {
         let mut a = app();
         a.update(key(KeyCode::Char('z')));
@@ -1155,8 +1422,10 @@ mod tests {
 
     mod live {
         use super::*;
+        use crate::cluster::config::ContextInfo;
         use crate::cluster::fetch::{FetchError, Lists};
         use crate::command::Command;
+        use crate::state::PickerKind;
 
         fn lists(snap: &crate::model::ClusterSnapshot) -> Lists {
             Lists {
@@ -1491,6 +1760,145 @@ mod tests {
                     container: "ledger-sync".into()
                 }]
             );
+        }
+
+        fn contexts() -> Vec<ContextInfo> {
+            let info = |name: &str, ns: Option<&str>| ContextInfo {
+                name: name.into(),
+                cluster: name.into(),
+                server_host: "k8s.example.test".into(),
+                namespace: ns.map(SafeText::from),
+                hint: "rancher",
+            };
+            vec![
+                info("dev", Some("shop")),
+                info("dev-west", None),
+                info("prod", Some("ops")),
+            ]
+        }
+
+        fn typed(a: &mut App, text: &str) {
+            for c in text.chars() {
+                a.update(key(KeyCode::Char(c)));
+            }
+        }
+
+        #[test]
+        fn x_opens_context_picker_marking_current() {
+            let mut a = loaded();
+            a.set_contexts(contexts());
+            a.update(key(KeyCode::Char('x')));
+            let picker = a.picker.as_ref().expect("picker open");
+            assert_eq!(picker.kind, PickerKind::Context);
+            assert_eq!(picker.total(), 3);
+            assert_eq!(
+                picker.chosen().unwrap().as_str(),
+                "dev",
+                "cursor starts on current"
+            );
+            assert!(picker.matches()[0].current);
+            assert_eq!(
+                picker.matches()[0].detail.as_str(),
+                "rancher · k8s.example.test"
+            );
+        }
+
+        #[test]
+        fn typing_in_picker_does_not_quit_or_navigate() {
+            let mut a = loaded();
+            a.set_contexts(contexts());
+            a.update(key(KeyCode::Char('x')));
+            typed(&mut a, "q3");
+            assert!(!a.quit);
+            assert_eq!(a.focus, Focus::List(ResourceKind::Pods));
+            assert_eq!(a.picker.as_ref().unwrap().query, "q3");
+            a.update(key(KeyCode::Esc));
+            assert!(a.picker.is_none());
+        }
+
+        #[test]
+        fn enter_switches_context_and_bumps_generation() {
+            let mut a = loaded();
+            a.set_contexts(contexts());
+            a.update(key(KeyCode::Char('x')));
+            typed(&mut a, "west");
+            a.update(key(KeyCode::Enter));
+            assert_eq!(
+                a.take_commands(),
+                [
+                    Command::StopLogs,
+                    Command::SwitchTarget {
+                        context: "dev-west".into(),
+                        namespace: "default".into()
+                    },
+                    Command::Refresh { generation: 1 },
+                ]
+            );
+            assert!(a.picker.is_none());
+            assert_eq!(a.snapshot.context.as_str(), "dev-west");
+            assert_eq!(a.snapshot.namespace.as_str(), "default");
+            assert!(a.snapshot.pods.is_empty() && a.selected.is_none() && a.logs.is_empty());
+            assert_eq!(a.connection, Connection::Connecting);
+            assert!(matches!(a.panes[0], PaneStatus::Loading { .. }));
+            a.update(data(DataEvent::Lists {
+                generation: 0,
+                lists: Box::new(lists(&sample_snapshot())),
+            }));
+            assert!(
+                a.snapshot.pods.is_empty(),
+                "late answer for the old context is dropped"
+            );
+        }
+
+        #[test]
+        fn n_lists_namespaces_and_switches_namespace() {
+            let mut a = loaded();
+            a.update(key(KeyCode::Char('n')));
+            assert_eq!(a.take_commands(), [Command::FetchNamespaces]);
+            assert!(a.picker.as_ref().unwrap().loading);
+            a.update(data(DataEvent::Namespaces(Ok(vec![
+                "kube-system".into(),
+                "shop".into(),
+                "team-a".into(),
+            ]))));
+            assert_eq!(
+                a.picker.as_ref().unwrap().chosen().unwrap().as_str(),
+                "shop"
+            );
+            typed(&mut a, "team");
+            a.update(key(KeyCode::Enter));
+            let cmds = a.take_commands();
+            assert!(
+                cmds.contains(&Command::SwitchTarget {
+                    context: "dev".into(),
+                    namespace: "team-a".into()
+                }),
+                "{cmds:?}"
+            );
+            assert_eq!(a.snapshot.namespace.as_str(), "team-a");
+        }
+
+        #[test]
+        fn namespace_picker_free_text_when_forbidden() {
+            let mut a = loaded();
+            a.update(key(KeyCode::Char('n')));
+            a.take_commands();
+            a.update(data(DataEvent::Namespaces(Err(FetchError::Timeout))));
+            typed(&mut a, "secret-team");
+            a.update(key(KeyCode::Enter));
+            assert!(a.take_commands().contains(&Command::SwitchTarget {
+                context: "dev".into(),
+                namespace: "secret-team".into()
+            }));
+        }
+
+        #[test]
+        fn pickers_unavailable_in_sample_mode() {
+            let mut a = app();
+            a.update(key(KeyCode::Char('x')));
+            a.update(key(KeyCode::Char('n')));
+            assert!(a.picker.is_none());
+            assert!(a.take_commands().is_empty());
         }
 
         #[test]

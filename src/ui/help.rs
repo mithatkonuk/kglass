@@ -8,17 +8,17 @@ use ratatui::widgets::{Block, Clear, Paragraph};
 use super::theme::Theme;
 
 pub const BINDINGS: &[(&str, &str)] = &[
-    ("↑↓ / j k", "move cursor or scroll viewer"),
-    ("PgUp / PgDn", "move or scroll by 10"),
+    ("↑↓ jk PgUp/Dn", "move or scroll (pages of 10)"),
     ("enter", "show the row in the viewer"),
     ("tab / shift+tab", "cycle focus"),
     ("1-4", "jump to list"),
     ("←→", "viewer tabs"),
-    ("c", "next container (logs)"),
-    ("f", "toggle follow (logs)"),
+    ("/", "filter the list by name"),
+    ("x / n", "switch context / namespace"),
+    ("r", "refresh now"),
+    ("c / f", "next container / follow logs"),
     ("z", "zoom viewer"),
-    ("esc", "close help / leave zoom"),
-    ("?", "toggle help"),
+    ("? / esc", "help / close or leave zoom"),
     ("q / ctrl+c", "quit"),
     ("mouse", "click rows/tabs; wheel scrolls"),
 ];

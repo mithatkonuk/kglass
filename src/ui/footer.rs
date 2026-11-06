@@ -7,6 +7,7 @@ use ratatui::widgets::Paragraph;
 
 use super::layout::LayoutMode;
 use super::theme::Theme;
+use crate::app::App;
 
 const WIDE_HINTS: &[(&str, &str)] = &[
     ("↑↓", "navigate"),
@@ -19,6 +20,9 @@ const WIDE_HINTS: &[(&str, &str)] = &[
     ("q", "quit"),
 ];
 
+/// Extra keys that only do something with a live cluster.
+const LIVE_HINTS: &[(&str, &str)] = &[("x", "context"), ("n", "namespace"), ("r", "refresh")];
+
 const NARROW_HINTS: &[(&str, &str)] = &[
     ("1-4", "list"),
     ("↑↓", "move"),
@@ -28,12 +32,34 @@ const NARROW_HINTS: &[(&str, &str)] = &[
     ("q", "quit"),
 ];
 
-pub fn draw(frame: &mut Frame, area: Rect, mode: LayoutMode, theme: &Theme) {
-    let hints = if mode == LayoutMode::Wide {
-        WIDE_HINTS
+pub fn draw(frame: &mut Frame, area: Rect, app: &App, mode: LayoutMode, theme: &Theme) {
+    if let Some(kind) = app.filter_editing {
+        let line = Line::from(vec![
+            Span::styled(
+                format!("filter {} › ", kind.title().to_lowercase()),
+                theme.key,
+            ),
+            Span::styled(format!("{}█", app.filter(kind)), theme.accent),
+            Span::styled("  enter done · esc clear", theme.muted),
+        ]);
+        frame.render_widget(Paragraph::new(line), area);
+        return;
+    }
+    let wide = mode == LayoutMode::Wide;
+    let mut hints: Vec<(&str, &str)> = if wide {
+        WIDE_HINTS.to_vec()
     } else {
-        NARROW_HINTS
+        NARROW_HINTS.to_vec()
     };
+    if wide {
+        // Insert before the help/quit hints.
+        let at = hints.len() - 2;
+        let mut extra = vec![("/", "filter")];
+        if app.is_live() {
+            extra.extend_from_slice(LIVE_HINTS);
+        }
+        hints.splice(at..at, extra);
+    }
     let spans: Vec<Span> = hints
         .iter()
         .flat_map(|(k, label)| {
