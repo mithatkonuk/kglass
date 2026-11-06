@@ -1,0 +1,23 @@
+[package]
+name = "kglass"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "Apache-2.0 OR MIT"
+description = "Kubeglass: a read-only terminal viewer for Kubernetes clusters"
+readme = "README.md"
+keywords = ["kubernetes", "tui", "kubectl", "terminal", "ratatui"]
+categories = ["command-line-utilities"]
+
+[[bin]]
+name = "kglass"
+path = "src/main.rs"
+
+[dependencies]
+ratatui = "0.30.2"
+clap = { version = "4.6", features = ["derive"] }
+color-eyre = "0.6.5"
+unicode-width = "0.2.3"
+
+[lints.rust]
+unsafe_code = "forbid"
