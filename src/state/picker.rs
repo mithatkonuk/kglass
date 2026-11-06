@@ -1,5 +1,6 @@
 //! Type-to-filter picker used for switching context and namespace.
 
+use crate::cluster::config::is_valid_namespace;
 use crate::cluster::fetch::FetchError;
 use crate::text::{SafeText, sanitize};
 
@@ -99,7 +100,16 @@ impl Picker {
             return Some(item.name.clone());
         }
         let typed = self.query.trim();
-        (self.kind == PickerKind::Namespace && !typed.is_empty()).then(|| SafeText::from(typed))
+        (self.kind == PickerKind::Namespace && is_valid_namespace(typed))
+            .then(|| SafeText::from(typed))
+    }
+
+    /// The typed text matches nothing and is not a valid namespace name.
+    pub fn invalid_name(&self) -> bool {
+        self.kind == PickerKind::Namespace
+            && self.matches().is_empty()
+            && !self.query.trim().is_empty()
+            && !is_valid_namespace(self.query.trim())
     }
 }
 
@@ -170,6 +180,17 @@ mod tests {
             p.type_char(c);
         }
         assert_eq!(p.chosen().unwrap().as_str(), "team-a");
+    }
+
+    #[test]
+    fn free_text_must_be_a_valid_namespace() {
+        let mut p = Picker::new(PickerKind::Namespace);
+        p.set_items(Vec::new());
+        for c in "x/secrets".chars() {
+            p.type_char(c);
+        }
+        assert_eq!(p.chosen(), None);
+        assert!(p.invalid_name());
     }
 
     #[test]

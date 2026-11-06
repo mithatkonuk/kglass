@@ -46,6 +46,13 @@ pub struct Args {
 impl Args {
     /// Reject flag combinations this version cannot honour yet.
     pub fn check(&self) -> Result<(), String> {
+        if let Some(ns) = &self.namespace
+            && !crate::cluster::config::is_valid_namespace(ns)
+        {
+            return Err(format!(
+                "\"{ns}\" is not a valid namespace name (lowercase letters, digits and '-')"
+            ));
+        }
         if self.all_namespaces && !self.demo {
             return Err(
                 "--all-namespaces is not supported yet (planned for phase 3); use -n <namespace>"
@@ -126,6 +133,12 @@ mod tests {
                 .check()
                 .is_ok()
         );
+    }
+
+    #[test]
+    fn invalid_namespace_rejected() {
+        let a = Args::try_parse_from(["kglass", "-n", "x/secrets"]).unwrap();
+        assert!(a.check().unwrap_err().contains("not a valid namespace"));
     }
 
     #[test]

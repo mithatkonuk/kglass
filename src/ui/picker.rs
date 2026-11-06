@@ -54,6 +54,11 @@ pub fn draw(frame: &mut Frame, area: Rect, picker: &Picker, theme: &Theme) {
             "type a namespace name and press enter",
             theme.muted,
         ));
+    } else if picker.invalid_name() {
+        lines.push(Line::styled(
+            "not a valid namespace name (lowercase letters, digits and '-')",
+            theme.warn,
+        ));
     } else {
         let cursor = picker.cursor();
         let offset = (cursor + 1).saturating_sub(list_rows);

@@ -34,6 +34,42 @@ fn describe(err: &KubeconfigError) -> String {
     }
 }
 
+/// Describe an authentication error without its payload. Credential plugins can
+/// print tokens on failure, so only the command name and exit status are shown.
+pub fn describe_auth(err: &kube::client::AuthError) -> String {
+    use kube::client::AuthError as E;
+    match err {
+        E::AuthExecRun { cmd, status, .. } => {
+            format!("credential plugin '{cmd}' failed ({status}); its output is hidden")
+        }
+        E::AuthExecStart(io) => format!("cannot start credential plugin: {io}"),
+        E::MissingCommand => "credential plugin command is missing in kubeconfig".to_string(),
+        E::ReadTokenFile(_, path) => format!("cannot read token file {}", path.display()),
+        E::InvalidBasicAuth(_) | E::InvalidBearerToken(_) => {
+            "credentials in kubeconfig are malformed".to_string()
+        }
+        _ => "authentication failed; refresh your credentials (details hidden)".to_string(),
+    }
+}
+
+fn describe_kube(err: &kube::Error) -> String {
+    match err {
+        kube::Error::Auth(auth) => describe_auth(auth),
+        other => other.to_string(),
+    }
+}
+
+/// Kubernetes namespace names are DNS-1123 labels. Checking them keeps typed text
+/// from turning into a different API path (e.g. `x/secrets`).
+pub fn is_valid_namespace(name: &str) -> bool {
+    let bytes = name.as_bytes();
+    let alnum = |b: &u8| b.is_ascii_lowercase() || b.is_ascii_digit();
+    (1..=63).contains(&bytes.len())
+        && bytes.iter().all(|b| alnum(b) || *b == b'-')
+        && bytes.first().is_some_and(alnum)
+        && bytes.last().is_some_and(alnum)
+}
+
 fn read_file(path: &Path) -> Result<Kubeconfig, ConfigError> {
     Kubeconfig::read_from(path).map_err(|e| ConfigError::Read {
         path: path.display().to_string(),
@@ -195,7 +231,7 @@ pub async fn client_for(target: &Target) -> Result<kube::Client, ConfigError> {
         .await
         .map_err(|e| client_error(describe(&e)))?;
     config.default_namespace = target.namespace.clone();
-    kube::Client::try_from(config).map_err(|e| client_error(e.to_string()))
+    kube::Client::try_from(config).map_err(|e| client_error(describe_kube(&e)))
 }
 
 #[cfg(test)]
@@ -317,6 +353,47 @@ mod tests {
         let t = resolve(merged(), Some("kind-local"), None).unwrap();
         let client = client_for(&t).await.unwrap();
         assert_eq!(client.default_namespace(), "default");
+    }
+
+    #[test]
+    fn namespace_names_follow_dns_1123() {
+        for ok in ["default", "team-a", "a", "kube-system", "x1"] {
+            assert!(is_valid_namespace(ok), "{ok}");
+        }
+        let too_long = "a".repeat(64);
+        for bad in [
+            "",
+            "x/secrets",
+            "Team",
+            "-a",
+            "a-",
+            "a.b",
+            "a b",
+            too_long.as_str(),
+            "../x",
+        ] {
+            assert!(!is_valid_namespace(bad), "{bad}");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn auth_plugin_output_is_never_shown() {
+        use kube::client::AuthError;
+        use std::os::unix::process::ExitStatusExt;
+        let err = AuthError::AuthExecRun {
+            cmd: "aws-iam-authenticator".into(),
+            status: std::process::ExitStatus::from_raw(256),
+            out: std::process::Output {
+                status: std::process::ExitStatus::from_raw(256),
+                stdout: b"{\"token\":\"k8s-aws-v1.SECRET\"}".to_vec(),
+                stderr: b"SECRET in stderr".to_vec(),
+            },
+        };
+        let text = describe_auth(&err);
+        assert!(text.contains("aws-iam-authenticator"), "{text}");
+        assert!(!text.contains("SECRET"), "{text}");
+        assert!(!describe_auth(&AuthError::AuthExec("SECRET".into())).contains("SECRET"));
     }
 
     #[test]

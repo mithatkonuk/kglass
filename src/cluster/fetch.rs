@@ -16,6 +16,7 @@ use serde::de::DeserializeOwned;
 use thiserror::Error;
 use tokio::time::timeout;
 
+use super::config::describe_auth;
 use super::convert::{self, EndpointSlice, Timestamp};
 use crate::model::{KubeEvent, Pod, ResourceRef, Service, StorageItem};
 use crate::text::SafeText;
@@ -71,7 +72,7 @@ fn map_error(err: kube::Error, action: Action<'_>) -> FetchError {
                 message: SafeText::from(status.message.as_str()),
             },
         },
-        kube::Error::Auth(e) => FetchError::Unauthorized(SafeText::from(e.to_string())),
+        kube::Error::Auth(e) => FetchError::Unauthorized(SafeText::from(describe_auth(&e))),
         other => FetchError::Unreachable(SafeText::from(other.to_string())),
     }
 }
@@ -471,6 +472,20 @@ mod tests {
             .map(ToString::to_string)
             .collect();
         assert_eq!(names, ["default", "shop"]);
+    }
+
+    #[test]
+    fn auth_errors_hide_plugin_output() {
+        let err = kube::Error::Auth(kube::client::AuthError::AuthExec("token SECRET".into()));
+        let action = Action {
+            verb: "list",
+            resource: "pods",
+            scope: "cluster",
+        };
+        match map_error(err, action) {
+            FetchError::Unauthorized(msg) => assert!(!msg.as_str().contains("SECRET"), "{msg}"),
+            other => panic!("unexpected {other:?}"),
+        }
     }
 
     #[tokio::test]
