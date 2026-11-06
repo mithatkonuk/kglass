@@ -200,9 +200,40 @@ Testing follows plan §12: unit tests for row formatting, image dedup, relations
     - Pods stream logs whatever tab is open.
     - `z` moves focus to the viewer.
     - Ages show as `2h05m`, as in the PDF.
-- **Carried into phase 2:**
-  - Restore the terminal on SIGTERM/SIGHUP (tokio signal handling arrives with tokio).
-  - Answer Q7.
-  - `--kubeconfig` is accepted but not used yet.
-  - Real-world startup check for D15: the owner's shell has `KUBECONFIG=~/.kube/dev-a:~/.kube/dev-b`, a colon-separated list that must be merged. `current-context` is `dev-cluster-01` with namespace `team-namespace`. Plain `kglass` must open exactly there.
-- **Next:** write `docs/plan-phase2.md`, covering real kubeconfig loading per D15, the context/namespace pickers, real lists with loading/403/stale states, filter and refresh.
+- 2026-11-06: **Phase 2 done: kglass connects to real clusters** (plan [`plan-phase2.md`](plan-phase2.md)).
+  - **What works:**
+    - plain `kglass` opens the kubectl target (D15)
+    - live lists refresh every 10s
+    - real logs, YAML and events
+    - per-pane loading, 403, stale and partial states
+    - `x` context picker, `n` namespace picker, `/` filter, `r` refresh
+    - `--demo` for sample data
+  - **Tests:** 192 passing, with fmt and clippy `-D warnings` clean. API tests use a mocked API server.
+  - **Real cluster:** accepted read-only on `dev-cluster-01` / `team-namespace` (RKE2 v1.36.4): 36 pods (matches kubectl), 53 services, 12 storage items, live logs. The pickers, filter, YAML, quit and SIGTERM were all driven through a pty.
+  - **Independent code review:** fixed, each with a test:
+    - the filter drew hidden rows
+    - list rendering was O(n²) at 5000 pods
+    - credential-plugin output could reach the screen
+    - typed namespaces could form other API paths
+    - the UI could deadlock after a failed switch
+    - a panicking refresh stalled auto-refresh
+    - switches could hang on interactive plugins
+    - log lines were capped too high (64 KiB → 8 KiB)
+    - ended streams never resumed
+    - dual-stack endpoints were double-counted
+  - **Decisions made here** (my calls):
+    - kube 4.2 rather than the 5-day-old 5.0; MSRV 1.89.
+    - Logs and YAML pulled forward from phase 3.
+    - Q7 → switching is session-only and never writes kubeconfig.
+    - Storage shows only PVs claimed from the current namespace.
+    - Kubeconfig problems exit before the TUI with a clear message.
+    - `-A` is rejected until phase 3.
+- **Phase 3 backlog:**
+  - `-A/--all-namespaces`, which needs namespace-qualified `ResourceRef`s
+  - a visible "showing first 5000" note when a list is truncated (lists are currently cut silently at 5000)
+  - log search, previous-container logs, and pretty-printing JSON log lines
+  - ghost rows for deleted resources
+  - Enter-to-follow relationships (service → pod)
+  - a full-screen startup auth screen
+  - events for more kinds and PVC `Terminating`
+- **Next:** write `docs/plan-phase3.md`.
