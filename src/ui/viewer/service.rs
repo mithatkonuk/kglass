@@ -3,7 +3,7 @@
 use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
 
-use super::{derived_tag, kv, note, section};
+use super::{derived_tag, kv, mark, note, related_cursor, section};
 use crate::app::{App, ViewerTab};
 use crate::derive::pods_matching;
 use crate::model::{Pod, ResourceRef, Service};
@@ -51,13 +51,18 @@ pub(super) fn lines(app: &App, tab: ViewerTab, theme: &Theme) -> Vec<Line<'stati
     };
     let matching = pods_matching(&svc.selector, &app.snapshot.pods);
     match tab {
-        ViewerTab::Details => details(svc, &matching, theme),
-        ViewerTab::Endpoints => endpoints(svc, &matching, theme),
+        ViewerTab::Details => details(svc, &matching, related_cursor(app), theme),
+        ViewerTab::Endpoints => endpoints(svc, &matching, related_cursor(app), theme),
         _ => Vec::new(),
     }
 }
 
-fn details(svc: &Service, matching: &[&Pod], theme: &Theme) -> Vec<Line<'static>> {
+fn details(
+    svc: &Service,
+    matching: &[&Pod],
+    cursor: Option<usize>,
+    theme: &Theme,
+) -> Vec<Line<'static>> {
     let mut lines = vec![
         section("Service", theme),
         kv("Name", svc.name.to_string(), theme),
@@ -101,13 +106,14 @@ fn details(svc: &Service, matching: &[&Pod], theme: &Theme) -> Vec<Line<'static>
     if matching.is_empty() {
         lines.push(note("No pods match the selector", theme));
     }
-    for p in matching {
-        lines.push(Line::from(vec![
+    for (i, p) in matching.iter().enumerate() {
+        let line = Line::from(vec![
             Span::styled("  → ", theme.key),
             Span::styled(format!("{:<24}", p.name.as_str()), theme.key),
             Span::raw(format!("{:<18}", p.status_label())),
             derived_tag(theme),
-        ]));
+        ]);
+        lines.push(mark(line, i, cursor, theme));
     }
     lines.push(Line::default());
     lines.push(note(
@@ -117,7 +123,12 @@ fn details(svc: &Service, matching: &[&Pod], theme: &Theme) -> Vec<Line<'static>
     lines
 }
 
-fn endpoints(svc: &Service, matching: &[&Pod], theme: &Theme) -> Vec<Line<'static>> {
+fn endpoints(
+    svc: &Service,
+    matching: &[&Pod],
+    cursor: Option<usize>,
+    theme: &Theme,
+) -> Vec<Line<'static>> {
     let mut lines = vec![Line::styled(
         format!("{} ready endpoints", svc.ready_endpoints),
         if svc.ready_endpoints == 0 {
@@ -128,16 +139,17 @@ fn endpoints(svc: &Service, matching: &[&Pod], theme: &Theme) -> Vec<Line<'stati
     )];
     lines.push(Line::default());
     let target = svc.ports.first().map(|p| p.target_port.clone());
-    for p in matching {
+    for (i, p) in matching.iter().enumerate() {
         let addr = match &target {
             Some(port) => format!("{}:{port}", p.pod_ip),
             None => p.pod_ip.to_string(),
         };
         let ready = if is_ready(p) { "ready" } else { "not ready" };
-        lines.push(Line::from(vec![
+        let line = Line::from(vec![
             Span::raw(format!("  {addr:<22}{:<24}{ready:<11}", p.name.as_str())),
             derived_tag(theme),
-        ]));
+        ]);
+        lines.push(mark(line, i, cursor, theme));
     }
     lines.push(Line::default());
     lines.push(note(

@@ -123,6 +123,9 @@ fn title(area: Rect, app: &App, theme: &Theme) -> Line<'static> {
 }
 
 fn hint(app: &App) -> String {
+    if !app.related().is_empty() {
+        return " ↑↓ choose · enter jump · ←→ tabs · z zoom ".to_string();
+    }
     match app.current_tab() {
         Some(ViewerTab::Logs) => " ←→ tabs · c container · f follow · z zoom ".to_string(),
         Some(_) => " ←→ tabs · ↑↓ scroll · z zoom ".to_string(),
@@ -162,6 +165,44 @@ fn yaml_lines(app: &App, r: &ResourceRef, theme: &Theme) -> Vec<Line<'static>> {
     text.lines()
         .map(|l| Line::raw(SafeText::from(l).to_string()))
         .collect()
+}
+
+/// Which related item is highlighted: only while the viewer has focus.
+pub(crate) fn related_cursor(app: &App) -> Option<usize> {
+    (app.focus == Focus::Viewer).then_some(app.related_cursor)
+}
+
+/// Highlight `line` when it is related item `index` under the cursor.
+pub(crate) fn mark(
+    line: Line<'static>,
+    index: usize,
+    cursor: Option<usize>,
+    theme: &Theme,
+) -> Line<'static> {
+    if cursor == Some(index) {
+        line.style(theme.cursor_focused)
+    } else {
+        line
+    }
+}
+
+/// A "Jump to" list of the related resources, for tabs that do not list them inline.
+pub(crate) fn jump_section(app: &App, theme: &Theme) -> Vec<Line<'static>> {
+    let related = app.related();
+    if related.is_empty() {
+        return Vec::new();
+    }
+    let cursor = related_cursor(app);
+    let mut lines = vec![Line::default(), section("Jump to", theme)];
+    for (i, r) in related.iter().enumerate() {
+        let line = Line::from(vec![
+            Span::styled("  → ", theme.key),
+            Span::raw(format!("{} {}  ", r.kind_label(), r.name())),
+            derived_tag(theme),
+        ]);
+        lines.push(mark(line, i, cursor, theme));
+    }
+    lines
 }
 
 pub(crate) fn section(title: &str, theme: &Theme) -> Line<'static> {

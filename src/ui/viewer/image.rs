@@ -2,7 +2,7 @@
 
 use ratatui::text::{Line, Span};
 
-use super::{derived_tag, kv, note, section};
+use super::{derived_tag, kv, mark, note, related_cursor, section};
 use crate::app::{App, ViewerTab};
 use crate::model::{ImageUsage, ResourceRef};
 use crate::ui::theme::Theme;
@@ -51,11 +51,15 @@ pub(super) fn lines(app: &App, tab: ViewerTab, theme: &Theme) -> Vec<Line<'stati
                 Span::styled("Containers using this image ", theme.title),
                 derived_tag(theme),
             ])];
-            lines.extend(
-                img.users
-                    .iter()
-                    .map(|(pod, container)| Line::raw(format!("  {pod} → {container}"))),
-            );
+            let cursor = related_cursor(app);
+            lines.extend(img.users.iter().enumerate().map(|(i, (pod, container))| {
+                mark(
+                    Line::raw(format!("  {pod} → {container}")),
+                    i,
+                    cursor,
+                    theme,
+                )
+            }));
             lines
         }
         _ => Vec::new(),

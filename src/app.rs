@@ -229,6 +229,8 @@ pub struct App {
     pub logs_previous: bool,
     /// Short note about the log view, e.g. why `p` did nothing.
     pub log_hint: Option<SafeText>,
+    /// Index into `related()` while the viewer has focus.
+    pub related_cursor: usize,
     pub hits: HitMap,
     pub size: (u16, u16),
     pub connection: Connection,
@@ -288,6 +290,7 @@ impl App {
             log_search_back: 0,
             logs_previous: false,
             log_hint: None,
+            related_cursor: 0,
             all_namespaces: opts.all_namespaces,
             hits: HitMap::default(),
             size: (0, 0),
@@ -915,6 +918,7 @@ impl App {
         self.log_search_back = 0;
         self.logs_previous = false;
         self.log_hint = None;
+        self.related_cursor = 0;
         self.restart_logs();
     }
 
@@ -1088,12 +1092,115 @@ impl App {
         }
     }
 
-    /// Move the list cursor, or scroll the viewer, by `delta` rows.
+    /// Move the list cursor, the related-items cursor, or scroll the viewer.
     pub fn move_focused(&mut self, delta: isize) {
         match self.focus {
             Focus::List(kind) => self.cursors[kind.index()].move_by(delta),
+            Focus::Viewer if delta.abs() == 1 && !self.related().is_empty() => {
+                let last = self.related().len() - 1;
+                self.related_cursor = self.related_cursor.saturating_add_signed(delta).min(last);
+            }
             Focus::Viewer => self.scroll_viewer(delta),
         }
+    }
+
+    /// Resources the current viewer tab links to, in the order the tab shows them.
+    /// These are derived from metadata (selectors, mounts, claim refs).
+    pub fn related(&self) -> Vec<ResourceRef> {
+        let (Some(selected), Some(tab)) = (&self.selected, self.current_tab()) else {
+            return Vec::new();
+        };
+        let snap = &self.snapshot;
+        let pod_refs = |pods: Vec<&crate::model::Pod>| -> Vec<ResourceRef> {
+            pods.into_iter()
+                .map(|p| ResourceRef::Pod(p.name.clone()))
+                .collect()
+        };
+        match (selected, tab) {
+            (ResourceRef::Service(name), ViewerTab::Details | ViewerTab::Endpoints) => snap
+                .services
+                .iter()
+                .find(|s| &s.name == name)
+                .map(|s| pod_refs(crate::derive::pods_matching(&s.selector, &snap.pods)))
+                .unwrap_or_default(),
+            (ResourceRef::Image(raw), ViewerTab::Workloads) => self
+                .images
+                .iter()
+                .find(|i| &i.raw == raw)
+                .map(|i| {
+                    i.users
+                        .iter()
+                        .map(|(pod, _)| ResourceRef::Pod(pod.clone()))
+                        .collect()
+                })
+                .unwrap_or_default(),
+            (ResourceRef::Pvc(name), ViewerTab::Details) => self
+                .storage_item(StorageKind::Pvc, name)
+                .and_then(|c| c.bound_to.clone())
+                .filter(|pv| self.storage_item(StorageKind::Pv, pv).is_some())
+                .map(ResourceRef::Pv)
+                .into_iter()
+                .collect(),
+            (ResourceRef::Pvc(name), ViewerTab::MountedBy) => self
+                .storage_item(StorageKind::Pvc, name)
+                .map(|c| c.mounted_by.iter().cloned().map(ResourceRef::Pod).collect())
+                .unwrap_or_default(),
+            (ResourceRef::Pv(name), ViewerTab::Details | ViewerTab::Claim) => self
+                .storage_item(StorageKind::Pv, name)
+                .and_then(|v| v.bound_to.as_ref())
+                .and_then(|claim| claim.as_str().split_once('/'))
+                .filter(|(ns, _)| *ns == snap.namespace.as_str())
+                .map(|(_, claim)| SafeText::from(claim))
+                .filter(|claim| self.storage_item(StorageKind::Pvc, claim).is_some())
+                .map(ResourceRef::Pvc)
+                .into_iter()
+                .collect(),
+            (ResourceRef::Pod(name), ViewerTab::Summary) => {
+                let Some(pod) = snap.pods.iter().find(|p| &p.name == name) else {
+                    return Vec::new();
+                };
+                let services = snap.services.iter().filter(|s| {
+                    !s.selector.is_empty()
+                        && s.selector.iter().all(|(k, v)| pod.labels.get(k) == Some(v))
+                });
+                let claims = self
+                    .storage_rows()
+                    .filter(|s| s.kind == StorageKind::Pvc && s.mounted_by.contains(name));
+                services
+                    .map(|s| ResourceRef::Service(s.name.clone()))
+                    .chain(claims.map(|c| ResourceRef::Pvc(c.name.clone())))
+                    .collect()
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    fn storage_item(&self, kind: StorageKind, name: &SafeText) -> Option<&StorageItem> {
+        self.snapshot
+            .storage
+            .iter()
+            .find(|s| s.kind == kind && &s.name == name)
+    }
+
+    /// Show `target` in the viewer and move the matching list's cursor to it,
+    /// clearing that list's filter if it hides the row.
+    pub fn jump_to(&mut self, target: ResourceRef) {
+        let kind = match target {
+            ResourceRef::Pod(_) => ResourceKind::Pods,
+            ResourceRef::Image(_) => ResourceKind::Images,
+            ResourceRef::Service(_) => ResourceKind::Services,
+            ResourceRef::Pvc(_) | ResourceRef::Pv(_) => ResourceKind::Storage,
+        };
+        if self.find_row(kind, &target).is_none() {
+            self.filters[kind.index()].clear();
+        }
+        let len = self.row_count(kind);
+        self.cursors[kind.index()].set_len(len);
+        if let Some(idx) = self.find_row(kind, &target) {
+            self.cursors[kind.index()].select(idx);
+        }
+        self.set_focus(Focus::List(kind));
+        self.select(target);
     }
 
     /// True when the viewer shows a log stream (Logs tab of a pod that has started).
@@ -1120,9 +1227,13 @@ impl App {
         }
     }
 
-    /// Select the row under the focused list's cursor.
+    /// Select the row under the focused list's cursor, or jump to the related
+    /// resource under the viewer's cursor.
     pub fn activate_cursor(&mut self) {
         let Focus::List(kind) = self.focus else {
+            if let Some(target) = self.related().get(self.related_cursor).cloned() {
+                self.jump_to(target);
+            }
             return;
         };
         let Some(idx) = self.cursors[kind.index()].selected() else {
@@ -1184,6 +1295,7 @@ impl App {
         if idx < self.current_tabs().len() {
             self.tab = idx;
             self.viewer_scroll = 0;
+            self.related_cursor = 0;
             self.request_yaml_if_needed();
         }
     }
@@ -1478,6 +1590,104 @@ mod tests {
         a.update(key(KeyCode::Down));
         a.update(key(KeyCode::Enter));
         assert_eq!(a.log_search, "");
+    }
+
+    fn open(a: &mut App, list: char, row: usize) {
+        a.update(key(KeyCode::Char(list)));
+        a.cursors[ResourceKind::from_number(list as u8 - b'0')
+            .unwrap()
+            .index()]
+        .select(row);
+        a.update(key(KeyCode::Enter));
+    }
+
+    fn svc(name: &str) -> ResourceRef {
+        ResourceRef::Service(name.into())
+    }
+
+    #[test]
+    fn related_resources_per_tab() {
+        let mut a = app();
+        open(&mut a, '3', 2);
+        assert_eq!(a.related(), [ResourceRef::Pod("billing-0".into())]);
+        open(&mut a, '4', 0);
+        assert_eq!(a.related(), [ResourceRef::Pv("pvc-3e1a9c52-0c09".into())]);
+        a.update(key(KeyCode::Right));
+        assert_eq!(a.current_tab(), Some(ViewerTab::MountedBy));
+        assert_eq!(a.related(), [ResourceRef::Pod("billing-0".into())]);
+        open(&mut a, '4', 3);
+        assert_eq!(a.related(), [ResourceRef::Pvc("data-billing-0".into())]);
+        open(&mut a, '2', 0);
+        a.update(key(KeyCode::Right));
+        assert_eq!(
+            a.related(),
+            [
+                ResourceRef::Pod("api-7c9d8f-x2k4".into()),
+                ResourceRef::Pod("api-7c9d8f-q8n1".into())
+            ]
+        );
+        open(&mut a, '1', 3);
+        a.update(key(KeyCode::Right));
+        assert_eq!(
+            a.related(),
+            [svc("billing"), ResourceRef::Pvc("data-billing-0".into())]
+        );
+    }
+
+    #[test]
+    fn enter_in_viewer_jumps_to_related_and_focuses_list() {
+        let mut a = app();
+        open(&mut a, '3', 2);
+        focus_viewer(&mut a);
+        a.update(key(KeyCode::Enter));
+        assert_eq!(a.selected, pod("billing-0"));
+        assert_eq!(a.focus, Focus::List(ResourceKind::Pods));
+        assert_eq!(
+            a.row_ref(ResourceKind::Pods, a.cursors[0].selected().unwrap()),
+            pod("billing-0")
+        );
+    }
+
+    #[test]
+    fn related_cursor_moves_and_clamps() {
+        let mut a = app();
+        open(&mut a, '1', 0);
+        a.update(key(KeyCode::Right));
+        focus_viewer(&mut a);
+        assert_eq!(
+            a.related(),
+            [svc("api"), svc("api-grpc"), svc("payments-lb")]
+        );
+        a.update(key(KeyCode::Down));
+        a.update(key(KeyCode::Down));
+        a.update(key(KeyCode::Down));
+        assert_eq!(a.related_cursor, 2);
+        a.update(key(KeyCode::Enter));
+        assert_eq!(a.selected, Some(svc("payments-lb")));
+    }
+
+    #[test]
+    fn jump_clears_a_filter_that_hides_the_target() {
+        let mut a = app();
+        a.update(key(KeyCode::Char('/')));
+        for c in "api".chars() {
+            a.update(key(KeyCode::Char(c)));
+        }
+        a.update(key(KeyCode::Enter));
+        open(&mut a, '3', 2);
+        focus_viewer(&mut a);
+        a.update(key(KeyCode::Enter));
+        assert_eq!(a.filter(ResourceKind::Pods), "");
+        assert_eq!(a.selected, pod("billing-0"));
+    }
+
+    #[test]
+    fn without_related_items_arrows_scroll() {
+        let mut a = app();
+        focus_viewer(&mut a);
+        assert!(a.related().is_empty());
+        a.update(key(KeyCode::Up));
+        assert!(!a.logs.follow(), "logs scrolled");
     }
 
     #[test]

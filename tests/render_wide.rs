@@ -352,3 +352,46 @@ fn log_search_shows_only_matching_lines() {
     assert!(!s.contains("DEBUG db"), "non-matching lines hidden\n{s}");
     assert!(s.contains("search \"ERROR\" · 1 matches"), "{s}");
 }
+
+#[test]
+fn related_items_highlighted_with_jump_hint() {
+    use ratatui::crossterm::event::KeyCode;
+    let mut a = app();
+    a.update(key(KeyCode::Char('3')));
+    a.update(key(KeyCode::Down));
+    a.update(key(KeyCode::Down));
+    a.update(key(KeyCode::Enter));
+    while a.focus != kglass::app::Focus::Viewer {
+        a.update(key(KeyCode::Tab));
+    }
+    let buf = render_to_buffer(&mut a, 160, 48);
+    let s = render_to_string(&mut a, 160, 48);
+    assert!(s.contains("↑↓ choose · enter jump"), "{s}");
+    let (y, line) = s
+        .lines()
+        .enumerate()
+        .find(|(_, l)| l.contains("→ billing-0"))
+        .expect("related line");
+    let x = line.chars().position(|c| c == '→').unwrap() as u16;
+    assert_eq!(
+        buf[(x, y as u16)].bg,
+        ratatui::style::Color::Blue,
+        "cursor line highlighted"
+    );
+}
+
+#[test]
+fn jump_section_for_pod_summary() {
+    use ratatui::crossterm::event::KeyCode;
+    let mut a = app();
+    a.update(key(KeyCode::Down));
+    a.update(key(KeyCode::Down));
+    a.update(key(KeyCode::Down));
+    a.update(key(KeyCode::Enter));
+    a.update(key(KeyCode::Right));
+    let s = render_to_string(&mut a, 160, 48);
+    assert!(
+        s.contains("Jump to") && s.contains("Service billing") && s.contains("PVC data-billing-0"),
+        "{s}"
+    );
+}

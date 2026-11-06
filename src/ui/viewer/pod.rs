@@ -211,7 +211,11 @@ pub(super) fn lines(app: &App, tab: ViewerTab, theme: &Theme) -> Vec<Line<'stati
         return Vec::new();
     };
     match tab {
-        ViewerTab::Summary => summary(pod, theme),
+        ViewerTab::Summary => {
+            let mut lines = summary(pod, theme);
+            lines.extend(super::jump_section(app, theme));
+            lines
+        }
         ViewerTab::Containers => containers(pod, theme),
         _ => Vec::new(),
     }

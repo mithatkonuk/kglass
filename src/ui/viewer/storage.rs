@@ -2,7 +2,7 @@
 
 use ratatui::text::{Line, Span};
 
-use super::{derived_tag, kv, note, section};
+use super::{derived_tag, jump_section, kv, mark, note, related_cursor, section};
 use crate::app::{App, ViewerTab};
 use crate::model::{ResourceRef, StorageItem, StorageKind};
 use crate::ui::theme::Theme;
@@ -30,13 +30,21 @@ pub(super) fn lines(app: &App, tab: ViewerTab, theme: &Theme) -> Vec<Line<'stati
         return Vec::new();
     };
     let mut lines = match (item.kind, tab) {
-        (_, ViewerTab::Details) => details(item, theme),
-        (StorageKind::Pvc, ViewerTab::MountedBy) => mounted_by(item, theme),
-        (StorageKind::Pv, ViewerTab::Claim) => vec![
-            section("Claim", theme),
-            kv("Bound claim", dash(item.bound_to.as_ref()), theme),
-            kv("Phase", item.status.to_string(), theme),
-        ],
+        (_, ViewerTab::Details) => {
+            let mut lines = details(item, theme);
+            lines.extend(jump_section(app, theme));
+            lines
+        }
+        (StorageKind::Pvc, ViewerTab::MountedBy) => mounted_by(item, related_cursor(app), theme),
+        (StorageKind::Pv, ViewerTab::Claim) => {
+            let mut lines = vec![
+                section("Claim", theme),
+                kv("Bound claim", dash(item.bound_to.as_ref()), theme),
+                kv("Phase", item.status.to_string(), theme),
+            ];
+            lines.extend(jump_section(app, theme));
+            lines
+        }
         (StorageKind::Pv, ViewerTab::StorageDetails) => vec![
             section("Storage", theme),
             kv("Storage class", item.storage_class.to_string(), theme),
@@ -78,7 +86,7 @@ fn details(item: &StorageItem, theme: &Theme) -> Vec<Line<'static>> {
     lines
 }
 
-fn mounted_by(item: &StorageItem, theme: &Theme) -> Vec<Line<'static>> {
+fn mounted_by(item: &StorageItem, cursor: Option<usize>, theme: &Theme) -> Vec<Line<'static>> {
     let mut lines = vec![Line::from(vec![
         Span::styled("Pods mounting this claim ", theme.title),
         derived_tag(theme),
@@ -86,10 +94,13 @@ fn mounted_by(item: &StorageItem, theme: &Theme) -> Vec<Line<'static>> {
     if item.mounted_by.is_empty() {
         lines.push(note("Not mounted by any pod", theme));
     }
-    lines.extend(
-        item.mounted_by
-            .iter()
-            .map(|p| Line::styled(format!("  → {p}"), theme.key)),
-    );
+    lines.extend(item.mounted_by.iter().enumerate().map(|(i, p)| {
+        mark(
+            Line::styled(format!("  → {p}"), theme.key),
+            i,
+            cursor,
+            theme,
+        )
+    }));
     lines
 }
