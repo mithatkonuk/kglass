@@ -27,8 +27,11 @@ pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 const PAGE_SIZE: u32 = 500;
 /// Stop paging after this many items (large clusters; see design D13).
 const MAX_ITEMS: usize = 5000;
-/// Longest log line kept; the rest of the line is dropped.
-pub const MAX_LOG_LINE: usize = 64 * 1024;
+/// Longest log line kept (bytes); the rest is dropped and marked. With the
+/// 5000-line buffer this bounds log memory to about 40 MiB.
+pub const MAX_LOG_LINE: usize = 8 * 1024;
+/// Appended to a line that was cut at [`MAX_LOG_LINE`].
+pub const TRUNCATED_MARKER: &str = " …[line truncated]";
 
 #[derive(Clone, Debug, PartialEq, Eq, Error)]
 pub enum FetchError {
@@ -324,6 +327,7 @@ where
     stream::try_unfold(reader, |mut reader| async move {
         let mut line = Vec::new();
         let mut saw_any = false;
+        let mut truncated = false;
         loop {
             let chunk = reader
                 .fill_buf()
@@ -338,6 +342,7 @@ where
                 None => (chunk.len(), false),
             };
             let room = MAX_LOG_LINE.saturating_sub(line.len());
+            truncated |= take > room;
             line.extend_from_slice(&chunk[..take.min(room)]);
             reader.consume_unpin(take + usize::from(done));
             if done {
@@ -350,7 +355,11 @@ where
         if line.last() == Some(&b'\r') {
             line.pop();
         }
-        let text = SafeText::from(String::from_utf8_lossy(&line).as_ref());
+        let mut text = String::from_utf8_lossy(&line).into_owned();
+        if truncated {
+            text.push_str(TRUNCATED_MARKER);
+        }
+        let text = SafeText::from(text);
         Ok(Some((text, reader)))
     })
 }
@@ -442,12 +451,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn very_long_log_line_is_capped() {
+    async fn very_long_log_line_is_capped_with_marker() {
         let reader =
             futures::io::Cursor::new([vec![b'x'; MAX_LOG_LINE * 2], b"\nnext\n".to_vec()].concat());
         let lines: Vec<_> = lines_lossy(reader).collect().await;
-        let first = lines[0].as_ref().unwrap();
-        assert_eq!(first.as_str().len(), MAX_LOG_LINE);
+        let first = lines[0].as_ref().unwrap().as_str();
+        assert_eq!(MAX_LOG_LINE, 8 * 1024);
+        assert!(
+            first.starts_with("xxxx") && first.ends_with(TRUNCATED_MARKER),
+            "{}",
+            &first[first.len() - 30..]
+        );
+        assert_eq!(first.len(), MAX_LOG_LINE + TRUNCATED_MARKER.len());
         assert_eq!(lines[1].as_ref().unwrap().as_str(), "next");
     }
 

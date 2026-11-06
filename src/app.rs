@@ -657,12 +657,21 @@ impl App {
         }
     }
 
-    /// Start logs for a selected pod that has started since it was selected.
+    /// Start logs for a selected pod that has started since it was selected, and
+    /// resume an ended stream once the pod is running (not for crash-looping pods).
     fn ensure_log_stream(&mut self) {
-        let started = self
-            .selected_pod()
-            .is_some_and(crate::model::Pod::has_started);
-        if self.is_live() && started && self.log_state == LogState::Idle {
+        if !self.is_live() || self.viewer_notice.is_some() {
+            return;
+        }
+        let Some(pod) = self.selected_pod() else {
+            return;
+        };
+        let restart = match self.log_state {
+            LogState::Idle => pod.has_started(),
+            LogState::Ended(_) => pod.status == crate::model::PodStatus::Running,
+            LogState::Streaming => false,
+        };
+        if restart {
             self.restart_logs();
         }
     }
@@ -1751,6 +1760,54 @@ mod tests {
             assert_eq!(a.take_commands(), [Command::Refresh { generation: 0 }]);
             a.update(key(KeyCode::Char('r')));
             assert!(a.take_commands().is_empty());
+        }
+
+        #[test]
+        fn ended_stream_resumes_on_refresh_when_pod_running() {
+            let mut a = loaded();
+            a.update(data(DataEvent::LogEnded {
+                session: 1,
+                error: Some(FetchError::Unreachable("reset".into())),
+            }));
+            a.request_refresh();
+            a.take_commands();
+            a.update(data(DataEvent::Lists {
+                generation: 0,
+                lists: Box::new(lists(&sample_snapshot())),
+            }));
+            assert_eq!(
+                a.take_commands(),
+                [Command::StartLogs {
+                    session: 2,
+                    pod: "api-7c9d8f-x2k4".into(),
+                    container: "api".into()
+                }]
+            );
+        }
+
+        #[test]
+        fn ended_stream_of_crashlooping_pod_is_not_retried() {
+            let mut a = loaded();
+            for _ in 0..3 {
+                a.update(key(KeyCode::Down));
+            }
+            a.update(key(KeyCode::Enter));
+            a.take_commands();
+            let session = 2;
+            a.update(data(DataEvent::LogEnded {
+                session,
+                error: None,
+            }));
+            a.request_refresh();
+            a.take_commands();
+            a.update(data(DataEvent::Lists {
+                generation: 0,
+                lists: Box::new(lists(&sample_snapshot())),
+            }));
+            assert!(
+                a.take_commands().is_empty(),
+                "billing-0 is CrashLoopBackOff"
+            );
         }
 
         #[test]
