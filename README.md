@@ -16,7 +16,7 @@ A fast, **read-only** terminal viewer for Kubernetes clusters. Pick a pod, image
 
 ## Install
 
-Requires Rust 1.88 or newer.
+Requires Rust 1.89 or newer.
 
 ```bash
 cargo install --locked --path .

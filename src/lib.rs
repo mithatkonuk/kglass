@@ -2,6 +2,7 @@
 
 pub mod app;
 pub mod cli;
+pub mod cluster;
 pub mod derive;
 pub mod fake;
 pub mod model;
