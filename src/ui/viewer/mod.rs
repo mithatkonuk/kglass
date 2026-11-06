@@ -37,6 +37,18 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &mut App, theme: &Theme) {
     frame.render_widget(block, area);
     app.hits.viewer = area;
 
+    // With a selection still shown, a lost connection is explained above it.
+    if let (Some(_), Connection::Disconnected { error }) = (&app.selected, &app.connection) {
+        let help = auth_help(app, &error.clone(), theme);
+        let height = u16::try_from(help.len()).unwrap_or(u16::MAX);
+        if inner.height > height + 3 {
+            let [banner, rest] =
+                Layout::vertical([Constraint::Length(height), Constraint::Fill(1)]).areas(inner);
+            frame.render_widget(Paragraph::new(help), banner);
+            inner = rest;
+        }
+    }
+
     // A deleted selection keeps its last content below an explanation.
     if let Some(notice) = app.viewer_notice.clone()
         && inner.height > 3
@@ -69,6 +81,16 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &mut App, theme: &Theme) {
         Some(tab) => {
             app.viewer_rows = usize::from(inner.height);
             let lines = content(app, tab, theme);
+            // Keep the highlighted related item on screen.
+            if let Some(row) = lines.iter().position(|l| l.style == theme.cursor_focused) {
+                let row = u16::try_from(row).unwrap_or(u16::MAX);
+                let rows = inner.height.max(1);
+                if row < app.viewer_scroll {
+                    app.viewer_scroll = row;
+                } else if row >= app.viewer_scroll.saturating_add(rows) {
+                    app.viewer_scroll = row + 1 - rows;
+                }
+            }
             let max_scroll = u16::try_from(lines.len().saturating_sub(1)).unwrap_or(u16::MAX);
             app.viewer_scroll = app.viewer_scroll.min(max_scroll);
             frame.render_widget(

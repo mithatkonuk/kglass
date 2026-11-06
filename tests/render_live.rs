@@ -443,3 +443,18 @@ fn auth_help_shown_once_in_viewer() {
         "header + viewer only\n{s}"
     );
 }
+
+#[test]
+fn auth_help_banner_with_a_stale_selection() {
+    let mut a = with_contexts(live_app());
+    a.update(lists_event(sample_lists()));
+    a.update(AppEvent::Data(DataEvent::Version {
+        generation: 0,
+        result: Err(FetchError::Unauthorized("token expired".into())),
+    }));
+    let s = render_to_string(&mut a, 160, 48);
+    assert!(
+        s.contains("✕ Cannot authenticate to context dev-01"),
+        "{s}"
+    );
+}

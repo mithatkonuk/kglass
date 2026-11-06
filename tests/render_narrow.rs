@@ -102,3 +102,27 @@ fn help_fits_minimum_terminal() {
         assert!(s.contains(needle), "missing {needle:?}\n{s}");
     }
 }
+
+#[test]
+fn related_cursor_scrolls_into_view() {
+    let mut a = app();
+    for _ in 0..3 {
+        a.update(key(KeyCode::Down));
+    }
+    a.update(key(KeyCode::Enter));
+    a.update(key(KeyCode::Right));
+    while a.focus != kglass::app::Focus::Viewer {
+        a.update(key(KeyCode::Tab));
+    }
+    let before = render_to_string(&mut a, 92, 20);
+    assert!(
+        !before.contains("PVC data-billing-0"),
+        "jump section starts below the fold\n{before}"
+    );
+    a.update(key(KeyCode::Down));
+    let after = render_to_string(&mut a, 92, 20);
+    assert!(
+        after.contains("→ PVC data-billing-0"),
+        "highlighted item scrolled into view\n{after}"
+    );
+}

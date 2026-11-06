@@ -41,14 +41,16 @@ pub(super) fn draw_logs(frame: &mut Frame, area: Rect, app: &mut App, theme: &Th
     app.viewer_rows = usize::from(body.height);
 
     frame.render_widget(Paragraph::new(toolbar_line(app, theme)), toolbar);
-    let lines: Vec<Line> = if app.log_search.is_empty() {
+    // Search matches are computed once per frame and reused for the status line.
+    let matches = (!app.log_search.is_empty()).then(|| app.log_matches());
+    let lines: Vec<Line> = if matches.is_none() {
         app.logs
             .visible(app.viewer_rows)
             .map(|l| log_line(&display_text(app, l), theme))
             .collect()
     } else {
         // Searching: the newest matches, `log_search_back` matches up from the bottom.
-        let matches = app.log_matches();
+        let matches = matches.as_deref().unwrap_or_default();
         let start = matches
             .len()
             .saturating_sub(app.viewer_rows + app.log_search_back);
@@ -85,14 +87,10 @@ pub(super) fn draw_logs(frame: &mut Frame, area: Rect, app: &mut App, theme: &Th
                     " {state} · {} lines buffered (cap {}){}",
                     app.logs.len(),
                     app.logs.cap(),
-                    if app.log_search.is_empty() {
-                        String::new()
-                    } else {
-                        format!(
-                            " · search \"{}\" · {} matches",
-                            app.log_search,
-                            app.log_matches().len()
-                        )
+                    match &matches {
+                        None => String::new(),
+                        Some(m) =>
+                            format!(" · search \"{}\" · {} matches", app.log_search, m.len()),
                     }
                 ),
                 theme.muted,

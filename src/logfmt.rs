@@ -53,16 +53,33 @@ fn timestamp(raw: Option<&str>) -> String {
     format!("{cut:<TS_WIDTH$}")
 }
 
+/// Upper-case level, with common spellings mapped to the 5-letter forms that get colour.
+fn normalize_level(level: &str) -> String {
+    match level.to_uppercase().as_str() {
+        "WARNING" => "WARN".to_string(),
+        "ERR" => "ERROR".to_string(),
+        "INFORMATION" => "INFO".to_string(),
+        other => other.to_string(),
+    }
+}
+
+/// `org.example.HttpExporter` → `HttpExporter`; `pkg/handler.go:42` → `handler.go:42`.
+fn short_logger(logger: &str) -> &str {
+    if logger.contains('/') {
+        logger.rsplit('/').next().unwrap_or(logger)
+    } else {
+        logger.rsplit('.').next().unwrap_or(logger)
+    }
+}
+
 /// Format a JSON log line, or `None` when it is not a JSON object with a message.
 pub fn format_line(raw: &str) -> Option<String> {
     let value: Value = serde_json::from_str(raw.trim()).ok()?;
     let obj = value.as_object()?;
     let message = first_str(obj, MESSAGE_KEYS)?;
-    let level = first_str(obj, LEVEL_KEYS)
-        .unwrap_or_default()
-        .to_uppercase();
+    let level = normalize_level(first_str(obj, LEVEL_KEYS).unwrap_or_default());
     let logger = first_str(obj, LOGGER_KEYS)
-        .map(|l| l.rsplit('.').next().unwrap_or(l))
+        .map(short_logger)
         .unwrap_or_default();
     let error = match (
         first_str(obj, &["error.type"]),
@@ -70,7 +87,10 @@ pub fn format_line(raw: &str) -> Option<String> {
     ) {
         (Some(kind), Some(msg)) => format!(" ✕ {kind}: {msg}"),
         (Some(only), None) | (None, Some(only)) => format!(" ✕ {only}"),
-        (None, None) => String::new(),
+        // logrus / zap put the error text in a plain `error` (or `err`) string.
+        (None, None) => first_str(obj, &["error", "err"])
+            .map(|e| format!(" ✕ {e}"))
+            .unwrap_or_default(),
     };
     let ts = timestamp(first_str(obj, TIMESTAMP_KEYS));
     // JSON may encode control characters (\u001b, \n); sanitize after decoding.
@@ -131,6 +151,15 @@ mod tests {
     fn numeric_timestamp_and_missing_fields_keep_alignment() {
         let out = format_line(r#"{"ts":1730880000.5,"severity":"debug","msg":"x"}"#).unwrap();
         assert_eq!(out, format!("{} DEBUG {:<16} x", " ".repeat(23), ""));
+    }
+
+    #[test]
+    fn zap_and_logrus_shapes() {
+        let zap = r#"{"ts":"2026-11-06T08:00:00Z","level":"warning","caller":"pkg/handler.go:42","msg":"slow","error":"connection refused"}"#;
+        assert_eq!(
+            format_line(zap).unwrap(),
+            "2026-11-06 08:00:00.000 WARN  handler.go:42    slow ✕ connection refused"
+        );
     }
 
     #[test]

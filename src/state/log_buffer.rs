@@ -96,16 +96,22 @@ impl LogBuffer {
         self.lines.get(index).map(SafeText::as_str)
     }
 
-    /// Indices of lines containing `query` (case-insensitive). Empty query: none.
+    /// Indices of lines containing `query`, ignoring ASCII case. Empty query: none.
+    /// Allocation-free per line, since it runs every frame over up to 5000 lines.
     pub fn matching(&self, query: &str) -> Vec<usize> {
         if query.is_empty() {
             return Vec::new();
         }
-        let query = query.to_lowercase();
+        let needle = query.as_bytes();
         self.lines
             .iter()
             .enumerate()
-            .filter(|(_, l)| l.as_str().to_lowercase().contains(&query))
+            .filter(|(_, l)| {
+                l.as_str()
+                    .as_bytes()
+                    .windows(needle.len())
+                    .any(|w| w.eq_ignore_ascii_case(needle))
+            })
             .map(|(i, _)| i)
             .collect()
     }

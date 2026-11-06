@@ -645,6 +645,7 @@ impl App {
 
     fn apply_lists(&mut self, lists: Lists) {
         self.refresh_in_flight = false;
+        let related_before = self.related().get(self.related_cursor).cloned();
         let remembered: Vec<Option<ResourceRef>> = ResourceKind::ALL
             .iter()
             .map(|k| {
@@ -692,6 +693,13 @@ impl App {
                 self.cursors[kind.index()].select(idx);
             }
         }
+
+        // Keep the related cursor on the same resource; clamp if it is gone.
+        let related = self.related();
+        self.related_cursor = related_before
+            .and_then(|r| related.iter().position(|x| *x == r))
+            .unwrap_or(self.related_cursor)
+            .min(related.len().saturating_sub(1));
 
         if self.selected.is_none() {
             if let Some(first) = self.row_ref(ResourceKind::Pods, 0) {
@@ -1041,6 +1049,14 @@ impl App {
             self.quit = true;
             return;
         }
+        // Only plain (or shifted) keys are bound; Ctrl/Alt/Super combinations are
+        // ignored, also while typing into the picker, a filter or the log search.
+        if key
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER)
+        {
+            return;
+        }
         if self.picker.is_some() {
             self.on_picker_key(key);
             return;
@@ -1051,13 +1067,6 @@ impl App {
         }
         if self.log_search_editing {
             self.on_log_search_key(key);
-            return;
-        }
-        // Only plain (or shifted) keys are bound; Ctrl/Alt/Super combinations are ignored.
-        if key
-            .modifiers
-            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER)
-        {
             return;
         }
         if key.code == KeyCode::Char('q') {
@@ -1072,6 +1081,10 @@ impl App {
         }
         match key.code {
             KeyCode::Char('?') => self.help = true,
+            KeyCode::Esc if self.focus == Focus::Viewer && !self.log_search.is_empty() => {
+                self.log_search.clear();
+                self.log_search_back = 0;
+            }
             KeyCode::Esc => self.zoom = false,
             KeyCode::Char('z') => self.toggle_zoom(),
             KeyCode::Up | KeyCode::Char('k') => self.move_focused(-1),
@@ -1086,6 +1099,8 @@ impl App {
             KeyCode::Char('f') => {
                 let on = !self.logs.follow();
                 self.logs.set_follow(on, self.viewer_rows);
+                // A search view always follows from the newest match.
+                self.log_search_back = 0;
             }
             KeyCode::Char('c') => self.cycle_container(),
             KeyCode::Char('r') => self.request_refresh(),
@@ -1594,6 +1609,58 @@ mod tests {
     }
 
     #[test]
+    fn esc_clears_a_kept_log_search() {
+        let mut a = app();
+        focus_viewer(&mut a);
+        a.update(key(KeyCode::Char('/')));
+        a.update(key(KeyCode::Char('x')));
+        a.update(key(KeyCode::Enter));
+        a.update(key(KeyCode::Esc));
+        assert_eq!(a.log_search, "");
+    }
+
+    #[test]
+    fn ctrl_and_alt_keys_are_not_typed_into_search_or_filter() {
+        let mut a = app();
+        focus_viewer(&mut a);
+        a.update(key(KeyCode::Char('/')));
+        a.update(AppEvent::Key(KeyEvent::new(
+            KeyCode::Char('w'),
+            KeyModifiers::CONTROL,
+        )));
+        a.update(AppEvent::Key(KeyEvent::new(
+            KeyCode::Char('b'),
+            KeyModifiers::ALT,
+        )));
+        assert_eq!(a.log_search, "");
+        a.update(key(KeyCode::Esc));
+        a.update(key(KeyCode::Char('1')));
+        a.update(key(KeyCode::Char('/')));
+        a.update(AppEvent::Key(KeyEvent::new(
+            KeyCode::Char('u'),
+            KeyModifiers::CONTROL,
+        )));
+        assert_eq!(a.filter(ResourceKind::Pods), "");
+    }
+
+    #[test]
+    fn follow_returns_search_view_to_newest() {
+        let mut a = app();
+        focus_viewer(&mut a);
+        a.update(key(KeyCode::Char('/')));
+        for c in "info".chars() {
+            a.update(key(KeyCode::Char(c)));
+        }
+        a.update(key(KeyCode::Enter));
+        a.viewer_rows = 3;
+        a.update(key(KeyCode::PageUp));
+        assert!(a.log_search_back > 0);
+        a.update(key(KeyCode::Char('f')));
+        a.update(key(KeyCode::Char('f')));
+        assert_eq!(a.log_search_back, 0);
+    }
+
+    #[test]
     fn new_selection_clears_log_search() {
         let mut a = app();
         focus_viewer(&mut a);
@@ -2094,6 +2161,40 @@ mod tests {
                 "the pod may just be past the cut-off"
             );
             assert!(a.is_truncated(ResourceKind::Pods) && !a.is_truncated(ResourceKind::Services));
+        }
+
+        #[test]
+        fn related_cursor_follows_its_resource_across_refresh() {
+            let mut a = loaded();
+            a.update(key(KeyCode::Char('3')));
+            a.update(key(KeyCode::Enter));
+            while a.focus != Focus::Viewer {
+                a.update(key(KeyCode::Tab));
+            }
+            a.update(key(KeyCode::Down));
+            assert_eq!(
+                a.related()[a.related_cursor],
+                pod("api-7c9d8f-q8n1").unwrap()
+            );
+            let mut snap = sample_snapshot();
+            snap.pods.remove(0);
+            a.request_refresh();
+            a.update(data(DataEvent::Lists {
+                generation: 0,
+                lists: Box::new(lists(&snap)),
+            }));
+            assert_eq!(a.related_cursor, 0);
+            assert_eq!(
+                a.related()[a.related_cursor],
+                pod("api-7c9d8f-q8n1").unwrap()
+            );
+            snap.pods.clear();
+            a.request_refresh();
+            a.update(data(DataEvent::Lists {
+                generation: 0,
+                lists: Box::new(lists(&snap)),
+            }));
+            assert_eq!(a.related_cursor, 0, "clamped when the list empties");
         }
 
         #[test]
