@@ -65,6 +65,9 @@ pub(super) fn draw_logs(frame: &mut Frame, area: Rect, app: &mut App, theme: &Th
     let (streaming, state) = if app.is_live() {
         match &app.log_state {
             LogState::Streaming => (true, "streaming".to_string()),
+            LogState::Ended(reason) if app.logs_previous && reason.as_str() == "stream closed" => {
+                (false, "previous logs (complete)".to_string())
+            }
             LogState::Ended(reason) => (false, format!("stream ended: {reason}")),
             LogState::Idle => (false, "not streaming".to_string()),
         }
@@ -99,6 +102,16 @@ pub(super) fn draw_logs(frame: &mut Frame, area: Rect, app: &mut App, theme: &Th
     );
 }
 
+fn previous_label(app: &App) -> String {
+    if app.logs_previous {
+        "previous on (p)".to_string()
+    } else if !app.is_live() || app.current_container_restarts().unwrap_or(0) == 0 {
+        "previous n/a".to_string()
+    } else {
+        "previous off (p)".to_string()
+    }
+}
+
 /// Structured lines are formatted unless raw mode is on; other lines show as received.
 fn display_text<'a>(app: &App, line: &'a str) -> std::borrow::Cow<'a, str> {
     if app.raw_logs {
@@ -126,7 +139,8 @@ fn toolbar_line(app: &App, theme: &Theme) -> Line<'static> {
     spans.extend([
         Span::styled(" follow ", theme.muted),
         Span::styled(follow, follow_style),
-        Span::styled(format!("   tail {LOG_TAIL}   previous n/a"), theme.muted),
+        Span::styled(format!("   tail {LOG_TAIL}   "), theme.muted),
+        Span::styled(previous_label(app), theme.muted),
         Span::styled(
             if app.raw_logs {
                 "   raw JSON (J)"
@@ -134,6 +148,12 @@ fn toolbar_line(app: &App, theme: &Theme) -> Line<'static> {
                 "   formatted (J)"
             },
             theme.muted,
+        ),
+        Span::styled(
+            app.log_hint
+                .as_ref()
+                .map_or(String::new(), |h| format!("   {h}")),
+            theme.warn,
         ),
     ]);
     Line::from(spans)

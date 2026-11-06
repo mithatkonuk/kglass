@@ -13,6 +13,8 @@ pub enum Command {
         session: u64,
         pod: SafeText,
         container: SafeText,
+        /// Logs of the previous (terminated) instance instead of following the current one.
+        previous: bool,
     },
     /// Stop the running log stream, if any.
     StopLogs,

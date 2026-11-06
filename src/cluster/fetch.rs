@@ -294,15 +294,11 @@ pub fn log_lines(
     pod: String,
     container: String,
     tail: i64,
+    previous: bool,
 ) -> impl Stream<Item = Result<SafeText, FetchError>> + Send {
     let open = async move {
         let api = Api::<k8s::Pod>::namespaced(client, &ns);
-        let params = LogParams {
-            container: Some(container),
-            follow: true,
-            tail_lines: Some(tail),
-            ..LogParams::default()
-        };
+        let params = log_params(container, tail, previous);
         let scope = format!("namespace \"{ns}\"");
         let action = Action {
             verb: "get",
@@ -317,6 +313,17 @@ pub fn log_lines(
         Ok(reader) => lines_lossy(reader).left_stream(),
         Err(e) => stream::once(async { Err(e) }).right_stream(),
     })
+}
+
+/// Log request parameters. Previous-instance logs are complete, so they are not followed.
+pub fn log_params(container: String, tail: i64, previous: bool) -> LogParams {
+    LogParams {
+        container: Some(container),
+        follow: !previous,
+        previous,
+        tail_lines: Some(tail),
+        ..LogParams::default()
+    }
 }
 
 /// Split a byte stream into sanitized lines of at most [`MAX_LOG_LINE`] bytes.
@@ -443,9 +450,16 @@ mod tests {
 
     #[tokio::test]
     async fn log_lines_sanitized_and_lossy() {
-        let lines: Vec<_> = log_lines(mock(healthy), NS.into(), "api-1".into(), "api".into(), 500)
-            .collect()
-            .await;
+        let lines: Vec<_> = log_lines(
+            mock(healthy),
+            NS.into(),
+            "api-1".into(),
+            "api".into(),
+            500,
+            false,
+        )
+        .collect()
+        .await;
         let lines: Vec<String> = lines.into_iter().map(|l| l.unwrap().to_string()).collect();
         assert_eq!(lines, ["line one", "bad \u{fffd} byte", "escape done"]);
     }
@@ -501,6 +515,18 @@ mod tests {
             FetchError::Unauthorized(msg) => assert!(!msg.as_str().contains("SECRET"), "{msg}"),
             other => panic!("unexpected {other:?}"),
         }
+    }
+
+    #[test]
+    fn previous_logs_do_not_follow() {
+        let live = log_params("api".into(), 500, false);
+        assert!(live.follow && !live.previous);
+        let prev = log_params("api".into(), 500, true);
+        assert!(!prev.follow && prev.previous);
+        assert_eq!(
+            (prev.tail_lines, prev.container.as_deref()),
+            (Some(500), Some("api"))
+        );
     }
 
     #[tokio::test]

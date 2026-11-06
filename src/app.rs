@@ -225,6 +225,10 @@ pub struct App {
     pub log_search_editing: bool,
     /// While searching: how many matches back from the newest the view starts.
     pub log_search_back: usize,
+    /// Showing the previous (terminated) container instance's logs (`p`).
+    pub logs_previous: bool,
+    /// Short note about the log view, e.g. why `p` did nothing.
+    pub log_hint: Option<SafeText>,
     pub hits: HitMap,
     pub size: (u16, u16),
     pub connection: Connection,
@@ -282,6 +286,8 @@ impl App {
             log_search: String::new(),
             log_search_editing: false,
             log_search_back: 0,
+            logs_previous: false,
+            log_hint: None,
             all_namespaces: opts.all_namespaces,
             hits: HitMap::default(),
             size: (0, 0),
@@ -533,6 +539,30 @@ impl App {
         self.log_search_back = 0;
     }
 
+    /// Restarts of the container whose logs are shown.
+    pub fn current_container_restarts(&self) -> Option<u32> {
+        let name = self.current_container()?;
+        self.selected_pod()?
+            .containers
+            .iter()
+            .find(|c| &c.name == name)
+            .map(|c| c.restarts)
+    }
+
+    /// Switch between the current and the previous container instance's logs.
+    fn toggle_previous_logs(&mut self) {
+        if !self.is_live() || self.current_tab() != Some(ViewerTab::Logs) {
+            return;
+        }
+        if !self.logs_previous && self.current_container_restarts() == Some(0) {
+            self.log_hint = Some(SafeText::from("no previous container (0 restarts)"));
+            return;
+        }
+        self.logs_previous = !self.logs_previous;
+        self.log_hint = None;
+        self.restart_logs();
+    }
+
     /// Buffer indices of log lines matching the search.
     pub fn log_matches(&self) -> Vec<usize> {
         self.logs.matching(&self.log_search)
@@ -703,7 +733,10 @@ impl App {
         };
         let restart = match self.log_state {
             LogState::Idle => pod.has_started(),
-            LogState::Ended(_) => pod.status == crate::model::PodStatus::Running,
+            // Previous-instance logs are complete; never resume them.
+            LogState::Ended(_) => {
+                !self.logs_previous && pod.status == crate::model::PodStatus::Running
+            }
             LogState::Streaming => false,
         };
         if restart {
@@ -880,6 +913,8 @@ impl App {
         self.log_search.clear();
         self.log_search_editing = false;
         self.log_search_back = 0;
+        self.logs_previous = false;
+        self.log_hint = None;
         self.restart_logs();
     }
 
@@ -939,6 +974,7 @@ impl App {
                     session: self.log_session,
                     pod,
                     container,
+                    previous: self.logs_previous,
                 });
                 self.log_state = LogState::Streaming;
             }
@@ -1031,6 +1067,7 @@ impl App {
             KeyCode::Char('c') => self.cycle_container(),
             KeyCode::Char('r') => self.request_refresh(),
             KeyCode::Char('J') => self.raw_logs = !self.raw_logs,
+            KeyCode::Char('p') => self.toggle_previous_logs(),
             KeyCode::Char('/') => match self.focus {
                 Focus::List(kind) => self.filter_editing = Some(kind),
                 Focus::Viewer if self.current_tab() == Some(ViewerTab::Logs) => {
@@ -1623,7 +1660,8 @@ mod tests {
                 [Command::StartLogs {
                     session: 1,
                     pod: "api-7c9d8f-x2k4".into(),
-                    container: "api".into()
+                    container: "api".into(),
+                    previous: false,
                 }]
             );
         }
@@ -1656,7 +1694,8 @@ mod tests {
                 [Command::StartLogs {
                     session: 2,
                     pod: "api-7c9d8f-x2k4".into(),
-                    container: "envoy".into()
+                    container: "envoy".into(),
+                    previous: false,
                 }]
             );
         }
@@ -1882,7 +1921,8 @@ mod tests {
                 [Command::StartLogs {
                     session: 2,
                     pod: "api-7c9d8f-x2k4".into(),
-                    container: "api".into()
+                    container: "api".into(),
+                    previous: false,
                 }]
             );
         }
@@ -1912,6 +1952,77 @@ mod tests {
             );
         }
 
+        /// Select the second pod (api-7c9d8f-q8n1, whose `api` container restarted once).
+        fn select_restarted_pod(a: &mut App) {
+            a.update(key(KeyCode::Down));
+            a.update(key(KeyCode::Enter));
+            a.take_commands();
+        }
+
+        #[test]
+        fn p_requests_previous_logs_and_back() {
+            let mut a = loaded();
+            select_restarted_pod(&mut a);
+            a.update(key(KeyCode::Char('p')));
+            assert!(a.logs_previous);
+            assert_eq!(
+                a.take_commands(),
+                [Command::StartLogs {
+                    session: 3,
+                    pod: "api-7c9d8f-q8n1".into(),
+                    container: "api".into(),
+                    previous: true
+                }]
+            );
+            a.update(key(KeyCode::Char('p')));
+            assert!(!a.logs_previous);
+            assert!(matches!(
+                a.take_commands()[..],
+                [Command::StartLogs {
+                    previous: false,
+                    ..
+                }]
+            ));
+        }
+
+        #[test]
+        fn p_with_zero_restarts_shows_hint_without_request() {
+            let mut a = loaded();
+            a.update(key(KeyCode::Char('p')));
+            assert!(!a.logs_previous);
+            assert!(a.take_commands().is_empty());
+            assert_eq!(
+                a.log_hint.as_ref().map(SafeText::as_str),
+                Some("no previous container (0 restarts)")
+            );
+        }
+
+        #[test]
+        fn previous_stream_is_not_resumed_and_resets_on_new_selection() {
+            let mut a = loaded();
+            select_restarted_pod(&mut a);
+            a.update(key(KeyCode::Char('p')));
+            a.take_commands();
+            a.update(data(DataEvent::LogEnded {
+                session: 3,
+                error: None,
+            }));
+            a.request_refresh();
+            a.take_commands();
+            a.update(data(DataEvent::Lists {
+                generation: 0,
+                lists: Box::new(lists(&sample_snapshot())),
+            }));
+            assert!(
+                a.take_commands().is_empty(),
+                "previous logs are complete, not resumed"
+            );
+            a.update(key(KeyCode::Up));
+            a.update(key(KeyCode::Enter));
+            assert!(!a.logs_previous);
+            assert_eq!(a.log_hint, None);
+        }
+
         #[test]
         fn pending_pod_starts_logs_once_running() {
             let mut a = loaded();
@@ -1933,7 +2044,8 @@ mod tests {
                 [Command::StartLogs {
                     session: 3,
                     pod: "ledger-sync-5f7d-h2c".into(),
-                    container: "ledger-sync".into()
+                    container: "ledger-sync".into(),
+                    previous: false,
                 }]
             );
         }

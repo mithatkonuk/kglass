@@ -111,12 +111,19 @@ impl Executor {
                 session,
                 pod,
                 container,
+                previous,
             } => {
                 self.stop_logs();
                 let tail = i64::try_from(LOG_TAIL).unwrap_or(i64::MAX);
                 self.log_task = Some(tokio::spawn(async move {
-                    let lines =
-                        fetch::log_lines(client, ns, pod.to_string(), container.to_string(), tail);
+                    let lines = fetch::log_lines(
+                        client,
+                        ns,
+                        pod.to_string(),
+                        container.to_string(),
+                        tail,
+                        previous,
+                    );
                     futures::pin_mut!(lines);
                     while let Some(item) = lines.next().await {
                         let event = match item {
@@ -400,6 +407,7 @@ mod tests {
             session: 9,
             pod: "api-1".into(),
             container: "api".into(),
+            previous: false,
         })
         .await;
         let mut lines = Vec::new();
@@ -423,6 +431,7 @@ mod tests {
             session: 1,
             pod: "api-1".into(),
             container: "api".into(),
+            previous: false,
         })
         .await;
         assert!(ex.log_task.is_some());

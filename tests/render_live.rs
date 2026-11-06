@@ -382,3 +382,24 @@ fn json_logs_render_formatted_and_shift_j_shows_raw() {
     assert!(s.contains(r#"{"@timestamp":"2026-11-06T08:47:21"#), "{s}");
     assert!(s.contains("raw JSON"), "toolbar shows the mode\n{s}");
 }
+
+#[test]
+fn toolbar_shows_previous_state() {
+    let mut a = live_app();
+    a.update(lists_event(sample_lists()));
+    let s = render_to_string(&mut a, 160, 48);
+    assert!(s.contains("previous n/a"), "0 restarts\n{s}");
+    a.update(key(KeyCode::Down));
+    a.update(key(KeyCode::Enter));
+    assert!(render_to_string(&mut a, 160, 48).contains("previous off (p)"));
+    a.update(key(KeyCode::Char('p')));
+    a.update(AppEvent::Data(DataEvent::LogEnded {
+        session: 3,
+        error: None,
+    }));
+    let s = render_to_string(&mut a, 160, 48);
+    assert!(
+        s.contains("previous on (p)") && s.contains("previous logs (complete)"),
+        "{s}"
+    );
+}
