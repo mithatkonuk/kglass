@@ -163,11 +163,13 @@ pub fn service(s: &k8s::Service, slices: &[EndpointSlice]) -> Service {
     let ready_endpoints: HashSet<String> = slices
         .iter()
         .filter(|sl| {
-            sl.metadata
-                .labels
-                .as_ref()
-                .and_then(|l| l.get(SERVICE_NAME_LABEL))
-                .is_some_and(|n| n == name)
+            sl.metadata.namespace == s.metadata.namespace
+                && sl
+                    .metadata
+                    .labels
+                    .as_ref()
+                    .and_then(|l| l.get(SERVICE_NAME_LABEL))
+                    .is_some_and(|n| n == name)
         })
         .flat_map(|sl| sl.endpoints.iter().flatten())
         // An unset `ready` condition should be treated as ready (EndpointConditions docs).
@@ -228,6 +230,7 @@ pub fn pvc(c: &k8s::PersistentVolumeClaim, pods: &[k8s::Pod]) -> StorageItem {
     });
     let mounted_by = pods
         .iter()
+        .filter(|p| p.metadata.namespace == c.metadata.namespace)
         .filter(|p| {
             p.spec
                 .as_ref()
@@ -534,6 +537,18 @@ mod tests {
             (events[1].count, crate::model::format_age(events[1].age)),
             (4, "10m".to_string())
         );
+    }
+
+    #[test]
+    fn mounts_only_count_pods_in_the_claims_namespace() {
+        let claims: Vec<k8s::PersistentVolumeClaim> =
+            load(include_str!("../../tests/fixtures/pvcs.json"));
+        let mut other: k8s::Pod = pods()[0].clone();
+        other.metadata.namespace = Some("other-team".into());
+        other.metadata.name = Some("api-elsewhere".into());
+        let item = pvc(&claims[0], &[pods()[0].clone(), other]);
+        let mounts: Vec<&str> = item.mounted_by.iter().map(SafeText::as_str).collect();
+        assert_eq!(mounts, ["api-1"]);
     }
 
     #[test]

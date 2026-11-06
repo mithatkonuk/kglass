@@ -1155,7 +1155,13 @@ impl App {
                 .services
                 .iter()
                 .find(|s| &s.name == name)
-                .map(|s| pod_refs(crate::derive::pods_matching(&s.selector, &snap.pods)))
+                .map(|s| {
+                    pod_refs(crate::derive::pods_matching(
+                        &s.selector,
+                        &s.namespace,
+                        &snap.pods,
+                    ))
+                })
                 .unwrap_or_default(),
             (ResourceRef::Image(raw), ViewerTab::Workloads) => self
                 .images

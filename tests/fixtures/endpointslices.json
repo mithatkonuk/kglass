@@ -114,5 +114,29 @@
     }
    }
   ]
+ },
+ {
+  "metadata": {
+   "name": "api-elsewhere",
+   "namespace": "other-team",
+   "labels": {
+    "kubernetes.io/service-name": "api"
+   }
+  },
+  "addressType": "IPv4",
+  "endpoints": [
+   {
+    "addresses": [
+     "10.9.9.9"
+    ],
+    "conditions": {
+     "ready": true
+    },
+    "targetRef": {
+     "kind": "Pod",
+     "name": "api-x"
+    }
+   }
+  ]
  }
 ]

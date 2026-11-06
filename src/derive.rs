@@ -32,13 +32,19 @@ pub fn images_in_use(pods: &[Pod]) -> Vec<ImageUsage> {
     by_raw
 }
 
-/// Pods whose labels contain every selector entry. An empty selector matches
-/// nothing (a Service without a selector has manually managed endpoints).
-pub fn pods_matching<'a>(selector: &BTreeMap<SafeText, SafeText>, pods: &'a [Pod]) -> Vec<&'a Pod> {
+/// Pods in `namespace` whose labels contain every selector entry. An empty
+/// selector matches nothing (a Service without a selector has manually managed
+/// endpoints). Selectors never reach across namespaces.
+pub fn pods_matching<'a>(
+    selector: &BTreeMap<SafeText, SafeText>,
+    namespace: &SafeText,
+    pods: &'a [Pod],
+) -> Vec<&'a Pod> {
     if selector.is_empty() {
         return Vec::new();
     }
     pods.iter()
+        .filter(|p| &p.namespace == namespace)
         .filter(|p| selector.iter().all(|(k, v)| p.labels.get(k) == Some(v)))
         .collect()
 }
@@ -78,12 +84,20 @@ mod tests {
             .find(|x| x.name.as_str() == "billing")
             .unwrap();
         assert_eq!(
-            pods_matching(&billing.selector, &s.pods)
+            pods_matching(&billing.selector, &billing.namespace, &s.pods)
                 .iter()
                 .map(|p| p.name.as_str())
                 .collect::<Vec<_>>(),
             ["billing-0"]
         );
-        assert!(pods_matching(&BTreeMap::new(), &s.pods).is_empty());
+        assert!(pods_matching(&BTreeMap::new(), &billing.namespace, &s.pods).is_empty());
+        let mut elsewhere = s.pods.clone();
+        for p in &mut elsewhere {
+            p.namespace = "other-team".into();
+        }
+        assert!(
+            pods_matching(&billing.selector, &billing.namespace, &elsewhere).is_empty(),
+            "same labels in another namespace do not match"
+        );
     }
 }

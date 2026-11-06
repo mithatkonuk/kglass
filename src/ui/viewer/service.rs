@@ -49,7 +49,7 @@ pub(super) fn lines(app: &App, tab: ViewerTab, theme: &Theme) -> Vec<Line<'stati
     let Some(svc) = selected_service(app) else {
         return Vec::new();
     };
-    let matching = pods_matching(&svc.selector, &app.snapshot.pods);
+    let matching = pods_matching(&svc.selector, &svc.namespace, &app.snapshot.pods);
     match tab {
         ViewerTab::Details => details(svc, &matching, related_cursor(app), theme),
         ViewerTab::Endpoints => endpoints(svc, &matching, related_cursor(app), theme),
