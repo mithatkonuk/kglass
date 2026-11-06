@@ -45,6 +45,15 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App, mode: LayoutMode, theme: &
         frame.render_widget(Paragraph::new(line), area);
         return;
     }
+    if app.log_search_editing {
+        let line = Line::from(vec![
+            Span::styled("search logs › ", theme.key),
+            Span::styled(format!("{}█", app.log_search), theme.accent),
+            Span::styled("  enter done · esc clear", theme.muted),
+        ]);
+        frame.render_widget(Paragraph::new(line), area);
+        return;
+    }
     let wide = mode == LayoutMode::Wide;
     let mut hints: Vec<(&str, &str)> = if wide {
         WIDE_HINTS.to_vec()

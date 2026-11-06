@@ -219,6 +219,12 @@ pub struct App {
     pub all_namespaces: bool,
     /// Show structured (JSON) log lines as received instead of formatted (`J`).
     pub raw_logs: bool,
+    /// Log search text; non-empty shows only matching lines.
+    pub log_search: String,
+    /// The log search is being typed; captures keys while set.
+    pub log_search_editing: bool,
+    /// While searching: how many matches back from the newest the view starts.
+    pub log_search_back: usize,
     pub hits: HitMap,
     pub size: (u16, u16),
     pub connection: Connection,
@@ -273,6 +279,9 @@ impl App {
             quit: false,
             plain: opts.plain,
             raw_logs: false,
+            log_search: String::new(),
+            log_search_editing: false,
+            log_search_back: 0,
             all_namespaces: opts.all_namespaces,
             hits: HitMap::default(),
             size: (0, 0),
@@ -504,6 +513,29 @@ impl App {
             }
             _ => {}
         }
+    }
+
+    fn on_log_search_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Enter => self.log_search_editing = false,
+            KeyCode::Esc => {
+                self.log_search.clear();
+                self.log_search_editing = false;
+            }
+            KeyCode::Backspace => {
+                self.log_search.pop();
+            }
+            KeyCode::Char(c) => self
+                .log_search
+                .push_str(&crate::text::sanitize(&c.to_string())),
+            _ => return,
+        }
+        self.log_search_back = 0;
+    }
+
+    /// Buffer indices of log lines matching the search.
+    pub fn log_matches(&self) -> Vec<usize> {
+        self.logs.matching(&self.log_search)
     }
 
     fn on_filter_key(&mut self, kind: ResourceKind, key: KeyEvent) {
@@ -845,6 +877,9 @@ impl App {
         self.viewer_scroll = 0;
         self.viewer_notice = None;
         self.yaml = None;
+        self.log_search.clear();
+        self.log_search_editing = false;
+        self.log_search_back = 0;
         self.restart_logs();
     }
 
@@ -955,6 +990,10 @@ impl App {
             self.on_filter_key(kind, key);
             return;
         }
+        if self.log_search_editing {
+            self.on_log_search_key(key);
+            return;
+        }
         // Only plain (or shifted) keys are bound; Ctrl/Alt/Super combinations are ignored.
         if key
             .modifiers
@@ -992,11 +1031,15 @@ impl App {
             KeyCode::Char('c') => self.cycle_container(),
             KeyCode::Char('r') => self.request_refresh(),
             KeyCode::Char('J') => self.raw_logs = !self.raw_logs,
-            KeyCode::Char('/') => {
-                if let Focus::List(kind) = self.focus {
-                    self.filter_editing = Some(kind);
+            KeyCode::Char('/') => match self.focus {
+                Focus::List(kind) => self.filter_editing = Some(kind),
+                Focus::Viewer if self.current_tab() == Some(ViewerTab::Logs) => {
+                    self.log_search.clear();
+                    self.log_search_back = 0;
+                    self.log_search_editing = true;
                 }
-            }
+                Focus::Viewer => {}
+            },
             KeyCode::Char('x') => self.open_context_picker(),
             KeyCode::Char('n') => self.open_namespace_picker(),
             KeyCode::Char(d @ '1'..='4') => {
@@ -1025,7 +1068,13 @@ impl App {
     }
 
     pub fn scroll_viewer(&mut self, delta: isize) {
-        if self.shows_log_stream() {
+        if self.shows_log_stream() && !self.log_search.is_empty() {
+            let max_back = self.log_matches().len().saturating_sub(self.viewer_rows);
+            self.log_search_back = self
+                .log_search_back
+                .saturating_add_signed(-delta)
+                .min(max_back);
+        } else if self.shows_log_stream() {
             self.logs.scroll_by(delta, self.viewer_rows);
         } else {
             self.viewer_scroll = self
@@ -1343,6 +1392,55 @@ mod tests {
         assert_eq!(a.row_count(ResourceKind::Pods), 0);
         a.update(key(KeyCode::Backspace));
         assert_eq!(a.filter(ResourceKind::Pods), "q3");
+    }
+
+    fn focus_viewer(a: &mut App) {
+        while a.focus != Focus::Viewer {
+            a.update(key(KeyCode::Tab));
+        }
+    }
+
+    #[test]
+    fn slash_in_log_viewer_searches_logs() {
+        let mut a = app();
+        focus_viewer(&mut a);
+        a.update(key(KeyCode::Char('/')));
+        assert!(a.log_search_editing);
+        for c in "error".chars() {
+            a.update(key(KeyCode::Char(c)));
+        }
+        a.update(key(KeyCode::Enter));
+        assert!(!a.log_search_editing);
+        assert_eq!(a.log_search, "error");
+        assert_eq!(a.filter(ResourceKind::Pods), "", "list filter untouched");
+        assert_eq!(a.log_matches().len(), 1);
+    }
+
+    #[test]
+    fn log_search_typing_does_not_trigger_keys_and_esc_clears() {
+        let mut a = app();
+        focus_viewer(&mut a);
+        a.update(key(KeyCode::Char('/')));
+        for c in "qz".chars() {
+            a.update(key(KeyCode::Char(c)));
+        }
+        assert!(!a.quit && !a.zoom);
+        a.update(key(KeyCode::Esc));
+        assert_eq!(a.log_search, "");
+        assert!(!a.log_search_editing);
+    }
+
+    #[test]
+    fn new_selection_clears_log_search() {
+        let mut a = app();
+        focus_viewer(&mut a);
+        a.update(key(KeyCode::Char('/')));
+        a.update(key(KeyCode::Char('x')));
+        a.update(key(KeyCode::Enter));
+        a.update(key(KeyCode::Char('1')));
+        a.update(key(KeyCode::Down));
+        a.update(key(KeyCode::Enter));
+        assert_eq!(a.log_search, "");
     }
 
     #[test]

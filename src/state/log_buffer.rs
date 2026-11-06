@@ -92,6 +92,24 @@ impl LogBuffer {
         }
     }
 
+    pub fn line(&self, index: usize) -> Option<&str> {
+        self.lines.get(index).map(SafeText::as_str)
+    }
+
+    /// Indices of lines containing `query` (case-insensitive). Empty query: none.
+    pub fn matching(&self, query: &str) -> Vec<usize> {
+        if query.is_empty() {
+            return Vec::new();
+        }
+        let query = query.to_lowercase();
+        self.lines
+            .iter()
+            .enumerate()
+            .filter(|(_, l)| l.as_str().to_lowercase().contains(&query))
+            .map(|(i, _)| i)
+            .collect()
+    }
+
     pub fn visible(&self, viewport: usize) -> impl Iterator<Item = &str> {
         let top = self.top(viewport);
         let end = (top + viewport).min(self.lines.len());
@@ -169,6 +187,28 @@ mod tests {
         let mut b = LogBuffer::new(4);
         b.push(SafeText::from("ok \x1b[2Jcleared"));
         assert_eq!(view(&b, 1), ["ok cleared"]);
+    }
+
+    #[test]
+    fn matching_is_case_insensitive_and_survives_eviction() {
+        let mut b = LogBuffer::new(4);
+        for l in [
+            "INFO ok",
+            "ERROR one",
+            "info fine",
+            "Error two",
+            "WARN x",
+            "error three",
+        ] {
+            b.push(SafeText::from(l));
+        }
+        let hits = b.matching("error");
+        assert_eq!(
+            hits.iter().map(|&i| b.line(i).unwrap()).collect::<Vec<_>>(),
+            ["Error two", "error three"]
+        );
+        assert!(b.matching("").is_empty(), "empty query matches nothing");
+        assert_eq!(b.line(99), None);
     }
 
     #[test]

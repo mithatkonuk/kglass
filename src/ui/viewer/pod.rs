@@ -41,11 +41,25 @@ pub(super) fn draw_logs(frame: &mut Frame, area: Rect, app: &mut App, theme: &Th
     app.viewer_rows = usize::from(body.height);
 
     frame.render_widget(Paragraph::new(toolbar_line(app, theme)), toolbar);
-    let lines: Vec<Line> = app
-        .logs
-        .visible(app.viewer_rows)
-        .map(|l| log_line(&display_text(app, l), theme))
-        .collect();
+    let lines: Vec<Line> = if app.log_search.is_empty() {
+        app.logs
+            .visible(app.viewer_rows)
+            .map(|l| log_line(&display_text(app, l), theme))
+            .collect()
+    } else {
+        // Searching: the newest matches, `log_search_back` matches up from the bottom.
+        let matches = app.log_matches();
+        let start = matches
+            .len()
+            .saturating_sub(app.viewer_rows + app.log_search_back);
+        matches
+            .iter()
+            .skip(start)
+            .take(app.viewer_rows)
+            .filter_map(|&i| app.logs.line(i))
+            .map(|l| log_line(&display_text(app, l), theme))
+            .collect()
+    };
     frame.render_widget(Paragraph::new(lines), body);
 
     let (streaming, state) = if app.is_live() {
@@ -65,9 +79,18 @@ pub(super) fn draw_logs(frame: &mut Frame, area: Rect, app: &mut App, theme: &Th
             Span::styled(dot, if streaming { theme.ok } else { theme.muted }),
             Span::styled(
                 format!(
-                    " {state} · {} lines buffered (cap {})",
+                    " {state} · {} lines buffered (cap {}){}",
                     app.logs.len(),
-                    app.logs.cap()
+                    app.logs.cap(),
+                    if app.log_search.is_empty() {
+                        String::new()
+                    } else {
+                        format!(
+                            " · search \"{}\" · {} matches",
+                            app.log_search,
+                            app.log_matches().len()
+                        )
+                    }
                 ),
                 theme.muted,
             ),

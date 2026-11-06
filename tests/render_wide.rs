@@ -325,3 +325,30 @@ fn header_says_sample_data_not_connected() {
     assert!(header.contains("SAMPLE DATA"), "{header}");
     assert!(!header.contains("Connected"), "{header}");
 }
+
+#[test]
+fn log_search_shows_only_matching_lines() {
+    use ratatui::crossterm::event::KeyCode;
+    let mut a = app();
+    while a.focus != kglass::app::Focus::Viewer {
+        a.update(key(KeyCode::Tab));
+    }
+    a.update(key(KeyCode::Char('/')));
+    for c in "ERROR".chars() {
+        a.update(key(KeyCode::Char(c)));
+    }
+    let editing = render_to_string(&mut a, 160, 48);
+    assert!(
+        editing
+            .lines()
+            .last()
+            .unwrap()
+            .contains("search logs › ERROR█"),
+        "{editing}"
+    );
+    a.update(key(KeyCode::Enter));
+    let s = render_to_string(&mut a, 160, 48);
+    assert!(s.contains("ERROR ledger"), "{s}");
+    assert!(!s.contains("DEBUG db"), "non-matching lines hidden\n{s}");
+    assert!(s.contains("search \"ERROR\" · 1 matches"), "{s}");
+}
