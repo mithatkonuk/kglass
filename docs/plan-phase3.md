@@ -29,7 +29,6 @@
   - `p` toggles previous-container logs.
   - `J` toggles raw/formatted JSON.
   - With a related-resources section showing, `↑↓` move between related resources and `Enter` jumps to the one selected.
-- Gate per task: fmt, clippy `-D warnings`, test. Commits end with the Co-Authored-By line.
 
 ## Review Focus
 

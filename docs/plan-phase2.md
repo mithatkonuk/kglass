@@ -48,6 +48,7 @@ Picking kube 4.2 over 5.0 was my call: 5.0 was released 5 days ago. Raising MSRV
 - **Stale responses** (from an older context, namespace or selection generation) are dropped.
 - **Gate per task:** `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`.
 
+
 ## Review Focus
 
 1. **Expired or invalid Rancher token** (401 on every call): the header shows `● Disconnected` with the API message and a hint to regenerate the kubeconfig in Rancher. Tested in Task 4 (mapping) and Task 5 (state).
