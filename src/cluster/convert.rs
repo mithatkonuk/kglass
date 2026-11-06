@@ -158,7 +158,9 @@ pub fn service(s: &k8s::Service, slices: &[EndpointSlice]) -> Service {
             protocol: text(p.protocol.as_deref(), "TCP"),
         })
         .collect();
-    let ready_endpoints = slices
+    // Dual-stack Services have one EndpointSlice per address family, so the same
+    // pod appears twice; count each backing pod (or address) once.
+    let ready_endpoints: std::collections::HashSet<String> = slices
         .iter()
         .filter(|sl| {
             sl.metadata
@@ -170,7 +172,15 @@ pub fn service(s: &k8s::Service, slices: &[EndpointSlice]) -> Service {
         .flat_map(|sl| sl.endpoints.iter().flatten())
         // An unset `ready` condition should be treated as ready (EndpointConditions docs).
         .filter(|ep| ep.conditions.as_ref().and_then(|c| c.ready) != Some(false))
-        .count();
+        .filter_map(|ep| match ep.target_ref.as_ref() {
+            Some(r) => Some(format!(
+                "{}/{}",
+                r.kind.as_deref().unwrap_or(""),
+                r.name.as_deref().unwrap_or("")
+            )),
+            None => ep.addresses.first().cloned(),
+        })
+        .collect();
     Service {
         name: SafeText::from(name),
         namespace: text(s.metadata.namespace.as_deref(), ""),
@@ -178,7 +188,7 @@ pub fn service(s: &k8s::Service, slices: &[EndpointSlice]) -> Service {
         cluster_ip: text(spec.and_then(|sp| sp.cluster_ip.as_deref()), "None"),
         ports,
         selector: labels(spec.and_then(|sp| sp.selector.as_ref())),
-        ready_endpoints: u32::try_from(ready_endpoints).unwrap_or(u32::MAX),
+        ready_endpoints: u32::try_from(ready_endpoints.len()).unwrap_or(u32::MAX),
     }
 }
 

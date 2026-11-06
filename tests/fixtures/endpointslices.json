@@ -1,7 +1,118 @@
 [
-  {"metadata":{"name":"api-abc","namespace":"shop","labels":{"kubernetes.io/service-name":"api"}},"addressType":"IPv4",
-   "endpoints":[{"addresses":["10.244.1.17"],"conditions":{"ready":true}},{"addresses":["10.244.2.9"],"conditions":{"ready":false}},{"addresses":["10.244.3.3"]}]},
-  {"metadata":{"name":"api-def","namespace":"shop","labels":{"kubernetes.io/service-name":"api"}},"addressType":"IPv4",
-   "endpoints":[{"addresses":["10.244.4.4"],"conditions":{"ready":true}}]},
-  {"metadata":{"name":"lb-x","namespace":"shop","labels":{"kubernetes.io/service-name":"lb"}},"addressType":"IPv4","endpoints":null}
+ {
+  "metadata": {
+   "name": "api-abc",
+   "namespace": "shop",
+   "labels": {
+    "kubernetes.io/service-name": "api"
+   }
+  },
+  "addressType": "IPv4",
+  "endpoints": [
+   {
+    "addresses": [
+     "10.244.1.17"
+    ],
+    "conditions": {
+     "ready": true
+    },
+    "targetRef": {
+     "kind": "Pod",
+     "name": "api-1"
+    }
+   },
+   {
+    "addresses": [
+     "10.244.2.9"
+    ],
+    "conditions": {
+     "ready": false
+    },
+    "targetRef": {
+     "kind": "Pod",
+     "name": "api-2"
+    }
+   },
+   {
+    "addresses": [
+     "10.244.3.3"
+    ],
+    "targetRef": {
+     "kind": "Pod",
+     "name": "api-3"
+    }
+   }
+  ]
+ },
+ {
+  "metadata": {
+   "name": "api-def",
+   "namespace": "shop",
+   "labels": {
+    "kubernetes.io/service-name": "api"
+   }
+  },
+  "addressType": "IPv4",
+  "endpoints": [
+   {
+    "addresses": [
+     "10.244.4.4"
+    ],
+    "conditions": {
+     "ready": true
+    },
+    "targetRef": {
+     "kind": "Pod",
+     "name": "api-4"
+    }
+   }
+  ]
+ },
+ {
+  "metadata": {
+   "name": "lb-x",
+   "namespace": "shop",
+   "labels": {
+    "kubernetes.io/service-name": "lb"
+   }
+  },
+  "addressType": "IPv4",
+  "endpoints": null
+ },
+ {
+  "metadata": {
+   "name": "api-v6",
+   "namespace": "shop",
+   "labels": {
+    "kubernetes.io/service-name": "api"
+   }
+  },
+  "addressType": "IPv6",
+  "endpoints": [
+   {
+    "addresses": [
+     "fd00::17"
+    ],
+    "conditions": {
+     "ready": true
+    },
+    "targetRef": {
+     "kind": "Pod",
+     "name": "api-1"
+    }
+   },
+   {
+    "addresses": [
+     "fd00::44"
+    ],
+    "conditions": {
+     "ready": true
+    },
+    "targetRef": {
+     "kind": "Pod",
+     "name": "api-4"
+    }
+   }
+  ]
+ }
 ]
