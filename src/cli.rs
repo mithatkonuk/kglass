@@ -53,12 +53,6 @@ impl Args {
                 "\"{ns}\" is not a valid namespace name (lowercase letters, digits and '-')"
             ));
         }
-        if self.all_namespaces && !self.demo {
-            return Err(
-                "--all-namespaces is not supported yet (planned for phase 3); use -n <namespace>"
-                    .to_string(),
-            );
-        }
         Ok(())
     }
 
@@ -118,21 +112,10 @@ mod tests {
     }
 
     #[test]
-    fn all_namespaces_rejected_for_now() {
+    fn all_namespaces_accepted() {
         let a = Args::try_parse_from(["kglass", "-A"]).unwrap();
-        assert!(a.check().unwrap_err().contains("not supported yet"));
-        assert!(
-            Args::try_parse_from(["kglass", "-n", "x"])
-                .unwrap()
-                .check()
-                .is_ok()
-        );
-        assert!(
-            Args::try_parse_from(["kglass", "-A", "--demo"])
-                .unwrap()
-                .check()
-                .is_ok()
-        );
+        assert!(a.check().is_ok());
+        assert!(a.to_options(None).all_namespaces);
     }
 
     #[test]

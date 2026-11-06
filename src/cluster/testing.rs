@@ -76,3 +76,18 @@ pub(crate) fn healthy(path: &str) -> Reply {
     };
     Some((200, body))
 }
+
+/// Like [`healthy`], but answering the cluster-wide list paths used by `-A`.
+pub(crate) fn all_namespaces(path: &str) -> Reply {
+    let namespaced = match path {
+        "/api/v1/pods" => "/api/v1/namespaces/shop/pods",
+        "/api/v1/services" => "/api/v1/namespaces/shop/services",
+        "/apis/discovery.k8s.io/v1/endpointslices" => {
+            "/apis/discovery.k8s.io/v1/namespaces/shop/endpointslices"
+        }
+        "/api/v1/persistentvolumeclaims" => "/api/v1/namespaces/shop/persistentvolumeclaims",
+        "/api/v1/events" => "/api/v1/namespaces/shop/events",
+        other => other,
+    };
+    healthy(namespaced)
+}

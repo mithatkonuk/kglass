@@ -1,5 +1,6 @@
 //! Diagnostic: fetch every list once from the current kubeconfig target and print
-//! counts and timings. Read-only. Run with `cargo run --example probe`.
+//! counts and timings. Read-only. Run with `cargo run --example probe`
+//! (`-- --all` for all namespaces, `-- --frame` to render one screen).
 
 use std::path::PathBuf;
 use std::time::Instant;
@@ -16,6 +17,12 @@ async fn main() {
     let target = resolve(kc, None, None).expect("target");
     println!("target: {target:?}");
     let client = client_for(&target).await.expect("client");
+    let scope = if std::env::args().any(|a| a == "--all") {
+        fetch::Scope::All
+    } else {
+        fetch::Scope::Namespace(target.namespace.clone())
+    };
+    println!("scope: {scope:?}");
     let t = Instant::now();
     println!(
         "version: {:?} ({:?})",
@@ -23,7 +30,7 @@ async fn main() {
         t.elapsed()
     );
     let t = Instant::now();
-    let lists = fetch::fetch_lists(&client, &target.namespace, Timestamp::now()).await;
+    let lists = fetch::fetch_lists(&client, &scope, Timestamp::now()).await;
     println!("lists took {:?}", t.elapsed());
     let count = |r: Result<usize, fetch::FetchError>| match r {
         Ok(n) => format!("{n}"),
@@ -46,6 +53,15 @@ async fn main() {
         "events:   {}",
         count(lists.events.as_ref().map(Vec::len).map_err(Clone::clone))
     );
+    if let Ok(pods) = &lists.pods {
+        let namespaces: std::collections::BTreeSet<&str> =
+            pods.iter().map(|p| p.namespace.as_str()).collect();
+        println!("pod namespaces: {}", namespaces.len());
+        println!(
+            "first pod key: {}",
+            pods.first().map_or("-", |p| p.name.as_str())
+        );
+    }
     if std::env::args().any(|a| a == "--frame") {
         println!("{}", render_live_frame(client, &target).await);
     }
@@ -61,11 +77,16 @@ pub async fn render_live_frame(
     use ratatui::{Terminal, backend::TestBackend};
 
     let (tx, mut rx) = tokio::sync::mpsc::channel(4096);
-    let mut executor = Executor::new(Some(client), target.namespace.clone(), tx);
+    let mut executor = Executor::new(
+        Some(client),
+        kglass::cluster::fetch::Scope::Namespace(target.namespace.clone()),
+        tx,
+    );
     let mut app = App::new_live(
         LiveTarget {
             context: target.context.as_str().into(),
             namespace: target.namespace.as_str().into(),
+            all_namespaces: false,
         },
         true,
     );

@@ -221,6 +221,7 @@ fn pane_title(app: &App, kind: ResourceKind) -> String {
 
 fn pane_subtitle(app: &App, kind: ResourceKind) -> String {
     match kind {
+        ResourceKind::Pods if app.all_namespaces => "all namespaces".to_string(),
         ResourceKind::Pods => format!("ns {}", app.snapshot.namespace),
         ResourceKind::Images => "derived from pod specs".to_string(),
         ResourceKind::Services => String::new(),
@@ -260,11 +261,15 @@ pub fn draw_list(
             PaneStatus::Loading { since_tick } => vec![loading_line(app, kind, *since_tick, theme)],
             PaneStatus::Failed(e) => error_lines(e, theme),
             PaneStatus::Ready | PaneStatus::Partial(_) => vec![Line::styled(
-                format!(
-                    "No {} in {}",
-                    kind.title().to_lowercase(),
-                    app.snapshot.namespace
-                ),
+                if app.all_namespaces {
+                    format!("No {} in any namespace", kind.title().to_lowercase())
+                } else {
+                    format!(
+                        "No {} in {}",
+                        kind.title().to_lowercase(),
+                        app.snapshot.namespace
+                    )
+                },
                 theme.muted,
             )],
         };

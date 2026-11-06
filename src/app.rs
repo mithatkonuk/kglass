@@ -124,6 +124,8 @@ pub enum YamlState {
 pub struct LiveTarget {
     pub context: SafeText,
     pub namespace: SafeText,
+    /// `-A`: show every namespace; objects are keyed `namespace/name`.
+    pub all_namespaces: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -347,6 +349,7 @@ impl App {
             },
         );
         app.source = Source::Live;
+        app.all_namespaces = target.all_namespaces;
         app.connection = Connection::Connecting;
         app.panes = std::array::from_fn(|_| PaneStatus::Loading { since_tick: 0 });
         app.request_refresh();
@@ -611,6 +614,7 @@ impl App {
     /// the log stream and starts a new generation so late answers are dropped.
     fn switch_target(&mut self, context: SafeText, namespace: SafeText) {
         self.picker = None;
+        self.all_namespaces = false;
         self.generation += 1;
         self.log_session += 1;
         if self.log_state == LogState::Streaming {
@@ -1188,9 +1192,15 @@ impl App {
             (ResourceRef::Pv(name), ViewerTab::Details | ViewerTab::Claim) => self
                 .storage_item(StorageKind::Pv, name)
                 .and_then(|v| v.bound_to.as_ref())
-                .and_then(|claim| claim.as_str().split_once('/'))
-                .filter(|(ns, _)| *ns == snap.namespace.as_str())
-                .map(|(_, claim)| SafeText::from(claim))
+                .and_then(|claim| {
+                    // A PV's claim ref is `namespace/name`: that is the PVC key under -A;
+                    // in one namespace the key is the bare name.
+                    if self.all_namespaces {
+                        return Some(claim.clone());
+                    }
+                    let (ns, name) = claim.as_str().split_once('/')?;
+                    (ns == snap.namespace.as_str()).then(|| SafeText::from(name))
+                })
                 .filter(|claim| self.storage_item(StorageKind::Pvc, claim).is_some())
                 .map(ResourceRef::Pvc)
                 .into_iter()
@@ -1909,6 +1919,7 @@ mod tests {
                 LiveTarget {
                     context: "dev".into(),
                     namespace: "shop".into(),
+                    all_namespaces: false,
                 },
                 false,
             )
@@ -2201,6 +2212,55 @@ mod tests {
                 lists: Box::new(lists(&snap)),
             }));
             assert_eq!(a.related_cursor, 0, "clamped when the list empties");
+        }
+
+        fn live_all() -> App {
+            let mut a = App::new_live(
+                LiveTarget {
+                    context: "dev".into(),
+                    namespace: "shop".into(),
+                    all_namespaces: true,
+                },
+                false,
+            );
+            a.take_commands();
+            a
+        }
+
+        #[test]
+        fn all_namespaces_relations_use_qualified_keys() {
+            let mut a = live_all();
+            assert!(a.all_namespaces);
+            let mut snap = sample_snapshot();
+            for s in &mut snap.storage {
+                if s.kind == crate::model::StorageKind::Pvc {
+                    s.name = format!("payments/{}", s.name).as_str().into();
+                }
+            }
+            a.update(data(DataEvent::Lists {
+                generation: 0,
+                lists: Box::new(lists(&snap)),
+            }));
+            a.update(key(KeyCode::Char('4')));
+            a.cursors[ResourceKind::Storage.index()].select(3);
+            a.update(key(KeyCode::Enter));
+            assert_eq!(
+                a.related(),
+                [ResourceRef::Pvc("payments/data-billing-0".into())]
+            );
+        }
+
+        #[test]
+        fn picking_a_namespace_leaves_all_namespaces() {
+            let mut a = live_all();
+            a.update(key(KeyCode::Char('n')));
+            a.update(data(DataEvent::Namespaces {
+                generation: 0,
+                result: Ok(vec!["team-a".into()]),
+            }));
+            a.update(key(KeyCode::Enter));
+            assert!(!a.all_namespaces);
+            assert_eq!(a.snapshot.namespace.as_str(), "team-a");
         }
 
         #[test]

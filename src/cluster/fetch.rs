@@ -146,12 +146,57 @@ pub struct Lists {
     pub truncated: Vec<ResourceKind>,
 }
 
-pub async fn fetch_lists(client: &Client, ns: &str, now: Timestamp) -> Lists {
-    let scope = format!("namespace \"{ns}\"");
-    let in_ns = |resource| Action {
+/// Which namespaces to show.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Scope {
+    Namespace(String),
+    /// `-A`: every namespace. Namespaced objects are keyed `namespace/name`.
+    All,
+}
+
+impl Scope {
+    /// Namespace and object name for an API call. Under `All`, keys are
+    /// `namespace/name` (Kubernetes names cannot contain `/`).
+    pub fn split(&self, key: &str) -> (String, String) {
+        match self {
+            Scope::Namespace(ns) => (ns.clone(), key.to_string()),
+            Scope::All => match key.split_once('/') {
+                Some((ns, name)) => (ns.to_string(), name.to_string()),
+                None => (String::new(), key.to_string()),
+            },
+        }
+    }
+
+    /// How a list call's scope is described in errors.
+    fn describe(&self) -> String {
+        match self {
+            Scope::Namespace(ns) => format!("namespace \"{ns}\""),
+            Scope::All => "cluster".to_string(),
+        }
+    }
+
+    fn api<K>(&self, client: &Client) -> Api<K>
+    where
+        K: kube::Resource<Scope = kube::core::NamespaceResourceScope, DynamicType = ()>,
+    {
+        match self {
+            Scope::Namespace(ns) => Api::namespaced(client.clone(), ns),
+            Scope::All => Api::all(client.clone()),
+        }
+    }
+}
+
+/// `namespace/name`, the key of a namespaced object under `-A`.
+fn qualified(namespace: Option<&str>, name: &SafeText) -> SafeText {
+    SafeText::from(format!("{}/{name}", namespace.unwrap_or_default()))
+}
+
+pub async fn fetch_lists(client: &Client, scope: &Scope, now: Timestamp) -> Lists {
+    let described = scope.describe();
+    let in_scope = |resource| Action {
         verb: "list",
         resource,
-        scope: &scope,
+        scope: &described,
     };
     let cluster = |resource| Action {
         verb: "list",
@@ -159,30 +204,21 @@ pub async fn fetch_lists(client: &Client, ns: &str, now: Timestamp) -> Lists {
         scope: "cluster",
     };
     let (pods, services, slices, pvcs, pvs, events) = tokio::join!(
+        list(scope.api::<k8s::Pod>(client), in_scope("pods")),
+        list(scope.api::<k8s::Service>(client), in_scope("services")),
         list(
-            Api::<k8s::Pod>::namespaced(client.clone(), ns),
-            in_ns("pods")
+            scope.api::<EndpointSlice>(client),
+            in_scope("endpointslices")
         ),
         list(
-            Api::<k8s::Service>::namespaced(client.clone(), ns),
-            in_ns("services")
-        ),
-        list(
-            Api::<EndpointSlice>::namespaced(client.clone(), ns),
-            in_ns("endpointslices")
-        ),
-        list(
-            Api::<k8s::PersistentVolumeClaim>::namespaced(client.clone(), ns),
-            in_ns("persistentvolumeclaims")
+            scope.api::<k8s::PersistentVolumeClaim>(client),
+            in_scope("persistentvolumeclaims")
         ),
         list(
             Api::<k8s::PersistentVolume>::all(client.clone()),
             cluster("persistentvolumes")
         ),
-        list(
-            Api::<k8s::Event>::namespaced(client.clone(), ns),
-            in_ns("events")
-        ),
+        list(scope.api::<k8s::Event>(client), in_scope("events")),
     );
     let mut truncated = Vec::new();
     if was_truncated(&pods) {
@@ -194,6 +230,7 @@ pub async fn fetch_lists(client: &Client, ns: &str, now: Timestamp) -> Lists {
     if was_truncated(&pvcs) || was_truncated(&pvs) {
         truncated.push(ResourceKind::Storage);
     }
+    let all = *scope == Scope::All;
     let pods = pods.map(|l| l.items);
     let services = services.map(|l| l.items);
     let slices = slices.map(|l| l.items);
@@ -201,21 +238,45 @@ pub async fn fetch_lists(client: &Client, ns: &str, now: Timestamp) -> Lists {
     let pvs = pvs.map(|l| l.items);
     let events = events.map(|l| l.items);
     let raw_pods = pods.as_deref().unwrap_or_default();
+
     let services = services.and_then(|svcs| {
         let slices = slices?;
-        Ok(svcs.iter().map(|s| convert::service(s, &slices)).collect())
+        Ok(svcs
+            .iter()
+            .map(|s| {
+                let mut svc = convert::service(s, &slices);
+                if all {
+                    svc.name = qualified(s.metadata.namespace.as_deref(), &svc.name);
+                }
+                svc
+            })
+            .collect())
     });
     let (storage, storage_partial) = match (pvcs, pvs) {
         (Err(e), _) => (Err(e), None),
         (Ok(claims), volumes) => {
-            let mut items: Vec<StorageItem> =
-                claims.iter().map(|c| convert::pvc(c, raw_pods)).collect();
+            let mut items: Vec<StorageItem> = claims
+                .iter()
+                .map(|c| {
+                    let mut item = convert::pvc(c, raw_pods);
+                    if all {
+                        let ns = c.metadata.namespace.as_deref();
+                        item.name = qualified(ns, &item.name);
+                        item.mounted_by =
+                            item.mounted_by.iter().map(|p| qualified(ns, p)).collect();
+                    }
+                    item
+                })
+                .collect();
             let partial = match volumes {
                 Ok(vs) => {
-                    // PVs are cluster-scoped; show only those claimed from this namespace.
+                    // PVs are cluster-scoped; in one namespace, show only those it claims.
                     items.extend(
                         vs.iter()
-                            .filter(|v| claim_namespace(v) == Some(ns))
+                            .filter(|v| match scope {
+                                Scope::Namespace(ns) => claim_namespace(v) == Some(ns.as_str()),
+                                Scope::All => true,
+                            })
                             .map(convert::pv),
                     );
                     None
@@ -225,12 +286,44 @@ pub async fn fetch_lists(client: &Client, ns: &str, now: Timestamp) -> Lists {
             (Ok(items), partial)
         }
     };
+    let pods = pods.map(|ps| {
+        ps.iter()
+            .map(|p| {
+                let mut pod = convert::pod(p, now);
+                if all {
+                    pod.name = qualified(p.metadata.namespace.as_deref(), &pod.name);
+                }
+                pod
+            })
+            .collect()
+    });
+    let events = events.map(|es| {
+        es.iter()
+            .filter_map(|e| {
+                let mut event = convert::event(e, now)?;
+                if all {
+                    let ns = e
+                        .involved_object
+                        .namespace
+                        .as_deref()
+                        .or(e.metadata.namespace.as_deref());
+                    event.object = match event.object {
+                        ResourceRef::Pod(n) => ResourceRef::Pod(qualified(ns, &n)),
+                        ResourceRef::Service(n) => ResourceRef::Service(qualified(ns, &n)),
+                        ResourceRef::Pvc(n) => ResourceRef::Pvc(qualified(ns, &n)),
+                        other => other,
+                    };
+                }
+                Some(event)
+            })
+            .collect()
+    });
     Lists {
-        pods: pods.map(|ps| ps.iter().map(|p| convert::pod(p, now)).collect()),
+        pods,
         services,
         storage,
         storage_partial,
-        events: events.map(|es| es.iter().filter_map(|e| convert::event(e, now)).collect()),
+        events,
         truncated,
     }
 }
@@ -253,16 +346,18 @@ where
 /// YAML of the selected object (images have none and return an empty string).
 pub async fn fetch_yaml(
     client: &Client,
-    ns: &str,
+    scope: &Scope,
     target: &ResourceRef,
 ) -> Result<String, FetchError> {
-    let scope = format!("namespace \"{ns}\"");
+    let (ns, name) = scope.split(target.name().as_str());
+    let ns = ns.as_str();
+    let name = name.as_str();
+    let described = format!("namespace \"{ns}\"");
     let get = |resource| Action {
         verb: "get",
         resource,
-        scope: &scope,
+        scope: &described,
     };
-    let name = target.name().as_str();
     match target {
         ResourceRef::Pod(_) => {
             yaml_of(
@@ -427,7 +522,7 @@ mod tests {
 
     #[tokio::test]
     async fn lists_fetched_and_converted() {
-        let lists = fetch_lists(&mock(healthy), NS, now()).await;
+        let lists = fetch_lists(&mock(healthy), &Scope::Namespace(NS.into()), now()).await;
         assert_eq!(lists.pods.as_ref().unwrap().len(), 7);
         let services = lists.services.as_ref().unwrap();
         assert_eq!(services[0].ready_endpoints, 3);
@@ -454,7 +549,7 @@ mod tests {
             }
             healthy(path)
         }
-        let lists = fetch_lists(&mock(route), NS, now()).await;
+        let lists = fetch_lists(&mock(route), &Scope::Namespace(NS.into()), now()).await;
         let storage = lists.storage.unwrap();
         assert_eq!(storage.len(), 2, "PVCs still shown");
         assert_eq!(
@@ -474,7 +569,7 @@ mod tests {
         fn route(_: &str) -> Reply {
             Some((401, status_json(401, "Unauthorized", "Unauthorized")))
         }
-        let lists = fetch_lists(&mock(route), NS, now()).await;
+        let lists = fetch_lists(&mock(route), &Scope::Namespace(NS.into()), now()).await;
         assert_eq!(
             lists.pods,
             Err(FetchError::Unauthorized("Unauthorized".into()))
@@ -487,7 +582,7 @@ mod tests {
         fn route(_: &str) -> Reply {
             None
         }
-        let lists = fetch_lists(&mock(route), NS, now()).await;
+        let lists = fetch_lists(&mock(route), &Scope::Namespace(NS.into()), now()).await;
         assert_eq!(lists.pods, Err(FetchError::Timeout));
         assert_eq!(lists.storage, Err(FetchError::Timeout));
     }
@@ -527,9 +622,13 @@ mod tests {
     #[tokio::test]
     async fn yaml_version_and_namespaces() {
         let client = mock(healthy);
-        let y = fetch_yaml(&client, NS, &ResourceRef::Pod("api-1".into()))
-            .await
-            .unwrap();
+        let y = fetch_yaml(
+            &client,
+            &Scope::Namespace(NS.into()),
+            &ResourceRef::Pod("api-1".into()),
+        )
+        .await
+        .unwrap();
         assert!(
             y.contains("name: api-1") && !y.contains("managedFields"),
             "{y}"
@@ -573,15 +672,62 @@ mod tests {
             }
             healthy(path)
         }
-        let lists = fetch_lists(&mock(route), NS, now()).await;
+        let lists = fetch_lists(&mock(route), &Scope::Namespace(NS.into()), now()).await;
         assert_eq!(
             lists.pods.unwrap().len(),
             4,
             "two pages of two reach the test cap of 3"
         );
         assert_eq!(lists.truncated, [ResourceKind::Pods, ResourceKind::Images]);
-        let healthy_lists = fetch_lists(&mock(healthy), NS, now()).await;
+        let healthy_lists = fetch_lists(&mock(healthy), &Scope::Namespace(NS.into()), now()).await;
         assert!(healthy_lists.truncated.is_empty());
+    }
+
+    #[tokio::test]
+    async fn all_namespaces_lists_cluster_wide_and_qualifies_names() {
+        use crate::cluster::testing::all_namespaces;
+        let lists = fetch_lists(&mock(all_namespaces), &Scope::All, now()).await;
+        let pods: Vec<String> = lists
+            .pods
+            .unwrap()
+            .iter()
+            .map(|p| p.name.to_string())
+            .collect();
+        assert_eq!(pods[0], "shop/api-1");
+        let services = lists.services.unwrap();
+        assert_eq!(
+            (services[0].name.as_str(), services[0].ready_endpoints),
+            ("shop/api", 3)
+        );
+        let storage = lists.storage.unwrap();
+        let names: Vec<&str> = storage.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(
+            names,
+            [
+                "shop/data-api",
+                "shop/cache",
+                "pvc-3e1a",
+                "pvc-77b2",
+                "pvc-other"
+            ]
+        );
+        assert_eq!(storage[0].mounted_by[0].as_str(), "shop/api-1");
+        let events = lists.events.unwrap();
+        assert_eq!(events[0].object, ResourceRef::Pod("shop/billing-0".into()));
+    }
+
+    #[test]
+    fn keys_split_into_namespace_and_name() {
+        let all = Scope::All;
+        assert_eq!(
+            all.split("shop/api-1"),
+            ("shop".to_string(), "api-1".to_string())
+        );
+        let one = Scope::Namespace("team-a".into());
+        assert_eq!(
+            one.split("api-1"),
+            ("team-a".to_string(), "api-1".to_string())
+        );
     }
 
     #[test]
@@ -598,9 +744,13 @@ mod tests {
 
     #[tokio::test]
     async fn missing_object_maps_to_api_error() {
-        let err = fetch_yaml(&mock(healthy), NS, &ResourceRef::Service("gone".into()))
-            .await
-            .unwrap_err();
+        let err = fetch_yaml(
+            &mock(healthy),
+            &Scope::Namespace(NS.into()),
+            &ResourceRef::Service("gone".into()),
+        )
+        .await
+        .unwrap_err();
         assert_eq!(
             err,
             FetchError::Api {

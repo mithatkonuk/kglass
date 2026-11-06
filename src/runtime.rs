@@ -14,7 +14,7 @@ use tokio::time::MissedTickBehavior;
 use crate::app::{App, AppEvent, DataEvent, LOG_TAIL};
 use crate::cluster::config::{Kubeconfig, Target, client_for};
 use crate::cluster::convert::Timestamp;
-use crate::cluster::fetch::{self, FetchError};
+use crate::cluster::fetch::{self, FetchError, Scope};
 use crate::command::Command;
 use crate::text::SafeText;
 use crate::ui;
@@ -39,7 +39,7 @@ pub fn map_terminal_event(ev: Event) -> Option<AppEvent> {
 /// Without a client (sample mode) commands are ignored.
 pub struct Executor {
     client: Option<Client>,
-    namespace: String,
+    scope: Scope,
     tx: mpsc::Sender<DataEvent>,
     log_task: Option<JoinHandle<()>>,
     /// Needed to build clients for other contexts (`SwitchTarget`).
@@ -49,10 +49,10 @@ pub struct Executor {
 }
 
 impl Executor {
-    pub fn new(client: Option<Client>, namespace: String, tx: mpsc::Sender<DataEvent>) -> Self {
+    pub fn new(client: Option<Client>, scope: Scope, tx: mpsc::Sender<DataEvent>) -> Self {
         Executor {
             client,
-            namespace,
+            scope,
             tx,
             log_task: None,
             kubeconfig: None,
@@ -76,7 +76,7 @@ impl Executor {
             return;
         };
         let tx = self.tx.clone();
-        let ns = self.namespace.clone();
+        let scope = self.scope.clone();
         match command {
             Command::SwitchTarget { .. } => unreachable!("handled above"),
             Command::FetchNamespaces { generation } => {
@@ -90,7 +90,7 @@ impl Executor {
                 let version_tx = tx.clone();
                 tokio::spawn(async move {
                     let lists = guarded_lists(async move {
-                        fetch::fetch_lists(&client, &ns, Timestamp::now()).await
+                        fetch::fetch_lists(&client, &scope, Timestamp::now()).await
                     })
                     .await;
                     let _ = tx
@@ -116,14 +116,10 @@ impl Executor {
                 self.stop_logs();
                 let tail = i64::try_from(LOG_TAIL).unwrap_or(i64::MAX);
                 self.log_task = Some(tokio::spawn(async move {
-                    let lines = fetch::log_lines(
-                        client,
-                        ns,
-                        pod.to_string(),
-                        container.to_string(),
-                        tail,
-                        previous,
-                    );
+                    let lines = {
+                        let (ns, pod) = scope.split(pod.as_str());
+                        fetch::log_lines(client, ns, pod, container.to_string(), tail, previous)
+                    };
                     futures::pin_mut!(lines);
                     while let Some(item) = lines.next().await {
                         let event = match item {
@@ -153,7 +149,7 @@ impl Executor {
             Command::StopLogs => self.stop_logs(),
             Command::FetchYaml { generation, target } => {
                 tokio::spawn(async move {
-                    let result = fetch::fetch_yaml(&client, &ns, &target).await;
+                    let result = fetch::fetch_yaml(&client, &scope, &target).await;
                     let _ = tx
                         .send(DataEvent::Yaml {
                             generation,
@@ -168,7 +164,7 @@ impl Executor {
 
     async fn switch_target(&mut self, context: String, namespace: String) {
         self.stop_logs();
-        self.namespace = namespace.clone();
+        self.scope = Scope::Namespace(namespace.clone());
         self.switch_error = None;
         let Some(kubeconfig) = self.kubeconfig.clone() else {
             return;
@@ -304,11 +300,11 @@ pub async fn run(
     terminal: &mut DefaultTerminal,
     mut app: App,
     client: Option<Client>,
-    namespace: String,
+    scope: Scope,
     kubeconfig: Option<Kubeconfig>,
 ) -> color_eyre::Result<()> {
     let (data_tx, mut data_rx) = mpsc::channel(DATA_CHANNEL);
-    let mut executor = Executor::new(client, namespace, data_tx);
+    let mut executor = Executor::new(client, scope, data_tx);
     if let Some(kc) = kubeconfig {
         executor = executor.with_kubeconfig(kc);
     }
@@ -363,7 +359,10 @@ mod tests {
 
     fn executor() -> (Executor, mpsc::Receiver<DataEvent>) {
         let (tx, rx) = mpsc::channel(64);
-        (Executor::new(Some(mock(healthy)), NS.to_string(), tx), rx)
+        (
+            Executor::new(Some(mock(healthy)), Scope::Namespace(NS.to_string()), tx),
+            rx,
+        )
     }
 
     async fn next(rx: &mut mpsc::Receiver<DataEvent>) -> DataEvent {
@@ -426,6 +425,23 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn all_namespaces_logs_use_the_pods_namespace() {
+        let (tx, mut rx) = mpsc::channel(64);
+        let mut ex = Executor::new(Some(mock(healthy)), Scope::All, tx);
+        ex.run(Command::StartLogs {
+            session: 4,
+            pod: "shop/api-1".into(),
+            container: "api".into(),
+            previous: false,
+        })
+        .await;
+        assert!(matches!(
+            next(&mut rx).await,
+            DataEvent::LogLine { session: 4, .. }
+        ));
+    }
+
+    #[tokio::test]
     async fn stop_logs_aborts_stream() {
         let (mut ex, _rx) = executor();
         ex.run(Command::StartLogs {
@@ -484,13 +500,14 @@ mod tests {
     #[tokio::test]
     async fn switch_target_rebuilds_client_for_new_namespace() {
         let (tx, _rx) = mpsc::channel(4);
-        let mut ex = Executor::new(None, "a".into(), tx).with_kubeconfig(fixture_kubeconfig());
+        let mut ex = Executor::new(None, Scope::Namespace("a".into()), tx)
+            .with_kubeconfig(fixture_kubeconfig());
         ex.run(Command::SwitchTarget {
             context: "kind-local".into(),
             namespace: "team-b".into(),
         })
         .await;
-        assert_eq!(ex.namespace, "team-b");
+        assert_eq!(ex.scope, Scope::Namespace("team-b".into()));
         assert_eq!(
             ex.client.as_ref().map(Client::default_namespace),
             Some("team-b")
@@ -500,7 +517,8 @@ mod tests {
     #[tokio::test]
     async fn failed_switch_reports_error_on_refresh() {
         let (tx, mut rx) = mpsc::channel(8);
-        let mut ex = Executor::new(None, "a".into(), tx).with_kubeconfig(fixture_kubeconfig());
+        let mut ex = Executor::new(None, Scope::Namespace("a".into()), tx)
+            .with_kubeconfig(fixture_kubeconfig());
         ex.run(Command::SwitchTarget {
             context: "nope".into(),
             namespace: "x".into(),
@@ -528,7 +546,8 @@ mod tests {
     #[tokio::test]
     async fn failed_switch_answers_yaml_and_namespaces() {
         let (tx, mut rx) = mpsc::channel(8);
-        let mut ex = Executor::new(None, "a".into(), tx).with_kubeconfig(fixture_kubeconfig());
+        let mut ex = Executor::new(None, Scope::Namespace("a".into()), tx)
+            .with_kubeconfig(fixture_kubeconfig());
         ex.run(Command::SwitchTarget {
             context: "nope".into(),
             namespace: "x".into(),
@@ -561,7 +580,8 @@ mod tests {
             error: None,
         })
         .unwrap();
-        let mut ex = Executor::new(None, "a".into(), tx).with_kubeconfig(fixture_kubeconfig());
+        let mut ex = Executor::new(None, Scope::Namespace("a".into()), tx)
+            .with_kubeconfig(fixture_kubeconfig());
         ex.run(Command::SwitchTarget {
             context: "nope".into(),
             namespace: "x".into(),
@@ -605,7 +625,7 @@ mod tests {
     #[tokio::test]
     async fn sample_mode_executor_ignores_commands() {
         let (tx, mut rx) = mpsc::channel(4);
-        let mut ex = Executor::new(None, NS.to_string(), tx);
+        let mut ex = Executor::new(None, Scope::Namespace(NS.to_string()), tx);
         ex.run(Command::Refresh { generation: 0 }).await;
         assert!(rx.try_recv().is_err());
     }

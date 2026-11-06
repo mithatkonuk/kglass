@@ -458,3 +458,18 @@ fn auth_help_banner_with_a_stale_selection() {
         "{s}"
     );
 }
+
+#[test]
+fn all_namespaces_header_and_titles() {
+    let mut a = kglass::app::App::new_live(
+        kglass::app::LiveTarget {
+            context: "dev-01".into(),
+            namespace: "default".into(),
+            all_namespaces: true,
+        },
+        false,
+    );
+    let s = render_to_string(&mut a, 160, 48);
+    assert!(s.lines().next().unwrap().contains("ns all"), "{s}");
+    assert!(s.contains("all namespaces"), "pods subtitle\n{s}");
+}

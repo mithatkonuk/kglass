@@ -78,6 +78,7 @@ pub fn live_app() -> App {
         kglass::app::LiveTarget {
             context: "dev-01".into(),
             namespace: "product-test".into(),
+            all_namespaces: false,
         },
         false,
     )
