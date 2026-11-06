@@ -6,6 +6,7 @@ rust-version = "1.89"
 license = "Apache-2.0 OR MIT"
 description = "Kubeglass: a read-only terminal viewer for Kubernetes clusters"
 readme = "README.md"
+repository = "https://github.com/mithatkonuk/kglass"
 keywords = ["kubernetes", "tui", "kubectl", "terminal", "ratatui"]
 categories = ["command-line-utilities"]
 
