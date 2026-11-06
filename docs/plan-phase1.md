@@ -18,7 +18,7 @@
 
 ## Global Constraints
 
-- Crate and binary are named `kglass`. In the UI, the full name is `Kubeglass` and the short header label is `KG`. Repo root is `/Users/mko/realm/personal/kglass`.
+- Minimum supported Rust version: 1.88 (required by ratatui 0.30). Crate and binary are named `kglass`. In the UI, the full name is `Kubeglass` and the short header label is `KG`. Repo root is `/Users/mko/realm/personal/kglass`.
 - Release 1 is read-only. The header always shows a mode badge: `READ-ONLY` in the wide layout, `RO` in the narrow one.
 - Status is never shown by colour alone. Pod symbols: `●` Running, `✕` CrashLoopBackOff/Failed, `✓` Completed, `◌` Pending. A text label always goes next to the symbol.
 - No-colour mode is on when `--no-color` is passed or the `NO_COLOR` env var is set and non-empty. It uses bold and reverse video only.

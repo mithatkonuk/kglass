@@ -14,9 +14,17 @@ A fast, **read-only** terminal viewer for Kubernetes clusters. Pick a pod, image
 - Status is never shown by colour alone. `--no-color` or `NO_COLOR=1` turns colours off.
 - Cluster text is sanitized before display, so escape sequences in names or logs can't control your terminal.
 
-## Run from source
+## Install
 
-Requires Rust 1.85 or newer.
+Requires Rust 1.88 or newer.
+
+```bash
+cargo install --locked --path .
+```
+
+This puts `kglass` in `~/.cargo/bin`. `--locked` builds with the dependency versions tested in `Cargo.lock`.
+
+## Run from source
 
 ```bash
 cargo run --release
