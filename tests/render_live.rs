@@ -361,3 +361,24 @@ fn renders_5000_pods_quickly_with_and_without_filter() {
         "10 frames took {elapsed:?}"
     );
 }
+
+#[test]
+fn json_logs_render_formatted_and_shift_j_shows_raw() {
+    let mut a = live_app();
+    a.update(lists_event(sample_lists()));
+    let raw = r#"{"@timestamp":"2026-11-06T08:47:21.082960321Z","log":{"level":"ERROR","logger":"io.otel.HttpExporter"},"message":"Failed to export spans."}"#;
+    a.update(AppEvent::Data(DataEvent::LogLine {
+        session: 1,
+        line: raw.into(),
+    }));
+    let s = render_to_string(&mut a, 160, 48);
+    assert!(
+        s.contains("2026-11-06 08:47:21.082 ERROR HttpExporter     Failed to export spans."),
+        "{s}"
+    );
+    assert!(!s.contains("@timestamp"), "{s}");
+    a.update(key(KeyCode::Char('J')));
+    let s = render_to_string(&mut a, 160, 48);
+    assert!(s.contains(r#"{"@timestamp":"2026-11-06T08:47:21"#), "{s}");
+    assert!(s.contains("raw JSON"), "toolbar shows the mode\n{s}");
+}

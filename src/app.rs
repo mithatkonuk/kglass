@@ -217,6 +217,8 @@ pub struct App {
     pub quit: bool,
     pub plain: bool,
     pub all_namespaces: bool,
+    /// Show structured (JSON) log lines as received instead of formatted (`J`).
+    pub raw_logs: bool,
     pub hits: HitMap,
     pub size: (u16, u16),
     pub connection: Connection,
@@ -270,6 +272,7 @@ impl App {
             help: false,
             quit: false,
             plain: opts.plain,
+            raw_logs: false,
             all_namespaces: opts.all_namespaces,
             hits: HitMap::default(),
             size: (0, 0),
@@ -988,6 +991,7 @@ impl App {
             }
             KeyCode::Char('c') => self.cycle_container(),
             KeyCode::Char('r') => self.request_refresh(),
+            KeyCode::Char('J') => self.raw_logs = !self.raw_logs,
             KeyCode::Char('/') => {
                 if let Focus::List(kind) = self.focus {
                     self.filter_editing = Some(kind);

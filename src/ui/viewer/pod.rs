@@ -8,6 +8,7 @@ use ratatui::widgets::{Paragraph, Wrap};
 
 use super::{events_lines, kv, note, section};
 use crate::app::{App, LOG_TAIL, LogState, ViewerTab};
+use crate::logfmt::format_line;
 use crate::model::{Pod, PodStatus, ResourceRef, format_age};
 use crate::ui::theme::Theme;
 
@@ -43,7 +44,7 @@ pub(super) fn draw_logs(frame: &mut Frame, area: Rect, app: &mut App, theme: &Th
     let lines: Vec<Line> = app
         .logs
         .visible(app.viewer_rows)
-        .map(|l| log_line(l, theme))
+        .map(|l| log_line(&display_text(app, l), theme))
         .collect();
     frame.render_widget(Paragraph::new(lines), body);
 
@@ -75,6 +76,14 @@ pub(super) fn draw_logs(frame: &mut Frame, area: Rect, app: &mut App, theme: &Th
     );
 }
 
+/// Structured lines are formatted unless raw mode is on; other lines show as received.
+fn display_text<'a>(app: &App, line: &'a str) -> std::borrow::Cow<'a, str> {
+    if app.raw_logs {
+        return line.into();
+    }
+    format_line(line).map_or(line.into(), Into::into)
+}
+
 fn toolbar_line(app: &App, theme: &Theme) -> Line<'static> {
     let mut spans = vec![Span::styled("container ▸ ", theme.muted)];
     for (i, name) in app.current_containers().iter().enumerate() {
@@ -95,6 +104,14 @@ fn toolbar_line(app: &App, theme: &Theme) -> Line<'static> {
         Span::styled(" follow ", theme.muted),
         Span::styled(follow, follow_style),
         Span::styled(format!("   tail {LOG_TAIL}   previous n/a"), theme.muted),
+        Span::styled(
+            if app.raw_logs {
+                "   raw JSON (J)"
+            } else {
+                "   formatted (J)"
+            },
+            theme.muted,
+        ),
     ]);
     Line::from(spans)
 }

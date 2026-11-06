@@ -6,6 +6,7 @@ pub mod cluster;
 pub mod command;
 pub mod derive;
 pub mod fake;
+pub mod logfmt;
 pub mod model;
 pub mod runtime;
 pub mod state;
