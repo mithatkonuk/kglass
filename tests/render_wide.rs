@@ -395,3 +395,13 @@ fn jump_section_for_pod_summary() {
         "{s}"
     );
 }
+
+#[test]
+fn highlighted_rows_keep_text_readable() {
+    let buf = render_to_buffer(&mut app(), 160, 48);
+    for cell in buf.content() {
+        if cell.bg != Color::Reset && !cell.symbol().trim().is_empty() {
+            assert_ne!(cell.fg, cell.bg, "invisible text {:?}", cell.symbol());
+        }
+    }
+}

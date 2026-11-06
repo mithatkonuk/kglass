@@ -2,7 +2,11 @@
 
 A fast, **read-only** terminal viewer for Kubernetes clusters. Pick a pod, image, service or volume from the lists on the left, and the large viewer on the right shows its logs, details and related resources.
 
-> **Status: phase 3.** Connects to your real cluster, read-only. Uses the same kubeconfig, context and namespace that `kubectl` would.
+> **Status: beta (phase 4).** Connects to your real cluster, read-only. Uses the same kubeconfig, context and namespace that `kubectl` would.
+
+![Kubeglass showing pods, images, services and storage with live logs](docs/screenshot.svg)
+
+*Rendered from `kglass --demo` with `cargo run --example screenshot`.*
 
 ## Features
 
@@ -68,6 +72,10 @@ cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
 ```
 
 The design and roadmap are in [docs/design.md](docs/design.md), and the phase 1 plan is in [docs/plan-phase1.md](docs/plan-phase1.md).
+
+## Contributing & security
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Please report vulnerabilities privately, as described in [SECURITY.md](SECURITY.md).
 
 ## License
 

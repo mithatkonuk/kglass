@@ -33,7 +33,8 @@ impl Theme {
             title: Style::new().add_modifier(Modifier::BOLD),
             derived: Style::new().fg(Color::Magenta),
             cursor_focused: Style::new().fg(Color::White).bg(Color::Blue),
-            cursor_unfocused: Style::new().bg(Color::DarkGray),
+            // A darker grey than `muted` text (DarkGray), so muted cells stay readable.
+            cursor_unfocused: Style::new().bg(Color::Indexed(237)),
             border_focused: Style::new().fg(Color::Green),
             border: Style::new().fg(Color::DarkGray),
         }
