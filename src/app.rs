@@ -729,41 +729,53 @@ impl App {
         self.visible_rows(kind).len()
     }
 
-    /// The resource on visible row `idx` (after filtering).
-    pub fn row_ref(&self, kind: ResourceKind, idx: usize) -> Option<ResourceRef> {
-        let row = *self.visible_rows(kind).get(idx)?;
-        self.display_ref(kind, row)
-    }
-
-    /// The resource at display-order index `row` (before filtering).
-    pub fn display_ref(&self, kind: ResourceKind, row: usize) -> Option<ResourceRef> {
+    /// Every row's resource in display order (before filtering), built in one pass.
+    fn all_refs(&self, kind: ResourceKind) -> Vec<ResourceRef> {
         match kind {
             ResourceKind::Pods => self
                 .snapshot
                 .pods
-                .get(row)
-                .map(|p| ResourceRef::Pod(p.name.clone())),
+                .iter()
+                .map(|p| ResourceRef::Pod(p.name.clone()))
+                .collect(),
             ResourceKind::Images => self
                 .images
-                .get(row)
-                .map(|i| ResourceRef::Image(i.raw.clone())),
+                .iter()
+                .map(|i| ResourceRef::Image(i.raw.clone()))
+                .collect(),
             ResourceKind::Services => self
                 .snapshot
                 .services
-                .get(row)
-                .map(|s| ResourceRef::Service(s.name.clone())),
-            ResourceKind::Storage => self.storage_rows().nth(row).map(|s| match s.kind {
-                StorageKind::Pvc => ResourceRef::Pvc(s.name.clone()),
-                StorageKind::Pv => ResourceRef::Pv(s.name.clone()),
-            }),
+                .iter()
+                .map(|s| ResourceRef::Service(s.name.clone()))
+                .collect(),
+            ResourceKind::Storage => self
+                .storage_rows()
+                .map(|s| match s.kind {
+                    StorageKind::Pvc => ResourceRef::Pvc(s.name.clone()),
+                    StorageKind::Pv => ResourceRef::Pv(s.name.clone()),
+                })
+                .collect(),
         }
+    }
+
+    /// Resources of the visible rows (after filtering), in display order. O(n).
+    pub fn visible_refs(&self, kind: ResourceKind) -> Vec<ResourceRef> {
+        let all = self.all_refs(kind);
+        self.visible_rows(kind)
+            .into_iter()
+            .filter_map(|i| all.get(i).cloned())
+            .collect()
+    }
+
+    /// The resource on visible row `idx` (after filtering).
+    pub fn row_ref(&self, kind: ResourceKind, idx: usize) -> Option<ResourceRef> {
+        self.visible_refs(kind).into_iter().nth(idx)
     }
 
     /// Visible row showing `r`, if any.
     fn find_row(&self, kind: ResourceKind, r: &ResourceRef) -> Option<usize> {
-        self.visible_rows(kind)
-            .iter()
-            .position(|&row| self.display_ref(kind, row).as_ref() == Some(r))
+        self.visible_refs(kind).iter().position(|x| x == r)
     }
 
     pub fn filter(&self, kind: ResourceKind) -> &str {

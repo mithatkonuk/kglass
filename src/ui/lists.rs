@@ -305,11 +305,17 @@ pub fn draw_list(
             Cell::from(Span::styled(truncate(h, usize::from(*w)), theme.muted))
         })),
     );
-    let table_rows: Vec<Row> = rows(app, kind, mode, theme)
+    // Rows, visible indices and their resources are computed once per frame.
+    let mut all_rows: Vec<Option<Vec<CellText>>> =
+        rows(app, kind, mode, theme).into_iter().map(Some).collect();
+    let refs = app.visible_refs(kind);
+    let table_rows: Vec<Row> = app
+        .visible_rows(kind)
         .into_iter()
-        .enumerate()
-        .map(|(i, cells)| {
-            let viewed = app.selected.is_some() && app.row_ref(kind, i) == app.selected;
+        .filter_map(|i| all_rows.get_mut(i).and_then(Option::take))
+        .zip(&refs)
+        .map(|(cells, r)| {
+            let viewed = app.selected.as_ref() == Some(r);
             let marker = Cell::from(Span::styled(if viewed { "›" } else { " " }, theme.key));
             Row::new(
                 std::iter::once(marker).chain(

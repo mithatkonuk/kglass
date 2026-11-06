@@ -285,3 +285,78 @@ fn live_footer_lists_cluster_keys() {
         assert!(footer.contains(needle), "missing {needle:?}: {footer}");
     }
 }
+
+#[test]
+fn filter_hides_non_matching_rows_and_enter_opens_highlighted() {
+    let mut a = live_app();
+    a.update(lists_event(sample_lists()));
+    a.update(key(KeyCode::Char('/')));
+    for c in "bill".chars() {
+        a.update(key(KeyCode::Char(c)));
+    }
+    a.update(key(KeyCode::Enter));
+    let s = render_to_string(&mut a, 160, 48);
+    let pods_pane: String = s
+        .lines()
+        .skip(4)
+        .take(8)
+        .map(|l| l.chars().take(64).collect::<String>() + "\n")
+        .collect();
+    assert!(pods_pane.contains("billing-0"), "{pods_pane}");
+    assert!(
+        !pods_pane.contains("api-7c9d8f-q8n1"),
+        "filtered-out rows are not drawn\n{pods_pane}"
+    );
+    a.update(key(KeyCode::Enter));
+    assert_eq!(
+        a.selected,
+        Some(kglass::model::ResourceRef::Pod("billing-0".into()))
+    );
+    // Mouse: the first visible row is billing-0.
+    render_to_string(&mut a, 160, 48);
+    let (rect, _, idx) = *a
+        .hits
+        .rows
+        .iter()
+        .find(|(_, k, _)| *k == ResourceKind::Pods)
+        .unwrap();
+    assert_eq!(idx, 0);
+    a.update(click(rect.x + 1, rect.y));
+    assert_eq!(
+        a.selected,
+        Some(kglass::model::ResourceRef::Pod("billing-0".into()))
+    );
+}
+
+#[test]
+fn renders_5000_pods_quickly_with_and_without_filter() {
+    let mut lists = sample_lists();
+    let template = sample_lists().pods.unwrap()[0].clone();
+    lists.pods = Ok((0..5000)
+        .map(|i| {
+            let mut p = template.clone();
+            p.name = format!("worker-{i:04}").as_str().into();
+            p
+        })
+        .collect());
+    let mut a = live_app();
+    a.update(lists_event(lists));
+    let start = std::time::Instant::now();
+    for _ in 0..5 {
+        render_to_string(&mut a, 160, 48);
+    }
+    a.update(key(KeyCode::Char('/')));
+    for c in "99".chars() {
+        a.update(key(KeyCode::Char(c)));
+    }
+    for _ in 0..5 {
+        render_to_string(&mut a, 160, 48);
+    }
+    let elapsed = start.elapsed();
+    // Names worker-0000..worker-4999 containing "99" (counted independently: 95).
+    assert_eq!(a.row_count(ResourceKind::Pods), 95);
+    assert!(
+        elapsed < std::time::Duration::from_secs(5),
+        "10 frames took {elapsed:?}"
+    );
+}
