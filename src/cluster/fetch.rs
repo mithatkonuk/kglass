@@ -21,6 +21,53 @@ use super::convert::{self, EndpointSlice, Timestamp};
 use crate::model::{KubeEvent, Pod, ResourceKind, ResourceRef, Service, StorageItem};
 use crate::text::SafeText;
 
+/// One Kubernetes permission kglass uses. `docs/rbac.md` is checked against
+/// this list by `tests/rbac_doc.rs`.
+pub struct Permission {
+    /// API group (`""` is the core group).
+    pub group: &'static str,
+    pub resource: &'static str,
+    pub verbs: &'static [&'static str],
+    /// Granted by a ClusterRole (cluster-scoped resource) rather than a Role.
+    pub cluster_scoped: bool,
+    /// kglass works without it; the affected part shows a "Forbidden" note.
+    pub optional: bool,
+}
+
+const fn perm(
+    group: &'static str,
+    resource: &'static str,
+    verbs: &'static [&'static str],
+    cluster_scoped: bool,
+    optional: bool,
+) -> Permission {
+    Permission {
+        group,
+        resource,
+        verbs,
+        cluster_scoped,
+        optional,
+    }
+}
+
+/// Every read kglass performs. All read-only; Secrets are never read.
+pub const PERMISSIONS: &[Permission] = &[
+    perm("", "pods", &["get", "list"], false, false),
+    perm("", "pods/log", &["get"], false, false),
+    perm("", "services", &["get", "list"], false, false),
+    perm(
+        "discovery.k8s.io",
+        "endpointslices",
+        &["list"],
+        false,
+        false,
+    ),
+    perm("", "persistentvolumeclaims", &["get", "list"], false, false),
+    perm("", "events", &["list"], false, true),
+    perm("", "persistentvolumes", &["get", "list"], true, true),
+    perm("", "namespaces", &["list"], true, true),
+];
+
 /// Upper bound for any single request (design D5).
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 /// Items requested per page.

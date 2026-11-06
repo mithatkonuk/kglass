@@ -52,7 +52,7 @@ On large clusters `-A` lists everything every 10s (about 8s for ~700 pods in 40 
 
 ### Permissions
 
-Read-only RBAC is enough: `get` and `list` on pods, `pods/log`, services, endpointslices, persistentvolumeclaims and events in the namespace. Listing persistentvolumes (cluster scope) and namespaces is optional; without it, those parts show a clear "Forbidden" note.
+Read-only access is enough: `get`/`list` on pods, services, persistentvolumeclaims, endpointslices and events, plus `get` on `pods/log`. PersistentVolumes and the namespace list are optional. Copy-ready Role/ClusterRole YAML is in [docs/rbac.md](docs/rbac.md); a test keeps it in sync with the code.
 
 ### Troubleshooting
 
