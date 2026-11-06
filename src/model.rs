@@ -303,14 +303,14 @@ pub struct ClusterSnapshot {
     pub events: Vec<KubeEvent>,
 }
 
-/// Compact age like kubectl: `42s`, `14m`, `3h12m`, `1d4h`.
+/// Compact age as in the design: `42s`, `14m`, `2h05m`, `1d4h`.
 pub fn format_age(d: Duration) -> String {
     let s = d.as_secs();
     let (days, hours, mins) = (s / 86_400, (s % 86_400) / 3600, (s % 3600) / 60);
     if days > 0 {
         format!("{days}d{hours}h")
     } else if hours > 0 {
-        format!("{hours}h{mins}m")
+        format!("{hours}h{mins:02}m")
     } else if mins > 0 {
         format!("{mins}m")
     } else {
@@ -355,6 +355,7 @@ mod tests {
     #[test]
     fn ages() {
         assert_eq!(format_age(secs(3 * 3600 + 12 * 60)), "3h12m");
+        assert_eq!(format_age(secs(2 * 3600 + 5 * 60)), "2h05m");
         assert_eq!(format_age(secs(28 * 3600)), "1d4h");
         assert_eq!(format_age(secs(14 * 60)), "14m");
         assert_eq!(format_age(secs(42)), "42s");

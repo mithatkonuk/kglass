@@ -57,3 +57,38 @@ fn minimum_narrow_size_renders() {
     let s = render_to_string(&mut app(), 60, 16);
     assert!(s.contains("[1] Pods 6"), "{s}");
 }
+
+#[test]
+fn service_billing_matches_pdf_page2() {
+    let mut a = app();
+    a.update(key(KeyCode::Char('3')));
+    a.update(key(KeyCode::Down));
+    a.update(key(KeyCode::Down));
+    a.update(key(KeyCode::Enter));
+    let s = render_to_string(&mut a, 92, 48);
+    for needle in [
+        "Details - Endpoints - Events - YAML",
+        "Service billing",
+        "app=billing",
+        "8443/TCP",
+        "No ready endpoints.",
+        "1 pod matches the selector; 0 are Ready.",
+        "→ billing-0",
+        "CrashLoopBackOff",
+        "[derived]",
+        "not network reachability",
+    ] {
+        assert!(s.contains(needle), "missing {needle:?}\n{s}");
+    }
+}
+
+#[test]
+fn service_endpoints_tab() {
+    let mut a = app();
+    a.update(key(KeyCode::Char('3')));
+    a.update(key(KeyCode::Enter));
+    a.update(key(KeyCode::Right));
+    let s = render_to_string(&mut a, 92, 48);
+    assert!(s.contains("2 ready endpoints"), "{s}");
+    assert!(s.contains("10.244.1.17") && s.contains("[derived]"), "{s}");
+}

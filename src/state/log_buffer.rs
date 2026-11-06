@@ -2,11 +2,13 @@
 
 use std::collections::VecDeque;
 
+use crate::text::SafeText;
+
 /// Holds at most `cap` lines. When following, the view sticks to the newest
 /// lines; otherwise it stays on the same content while old lines are evicted.
 #[derive(Clone, Debug)]
 pub struct LogBuffer {
-    lines: VecDeque<String>,
+    lines: VecDeque<SafeText>,
     cap: usize,
     follow: bool,
     /// First visible line when not following (index into `lines`).
@@ -24,7 +26,7 @@ impl LogBuffer {
         }
     }
 
-    pub fn push(&mut self, line: String) {
+    pub fn push(&mut self, line: SafeText) {
         self.lines.push_back(line);
         if self.lines.len() > self.cap {
             self.lines.pop_front();
@@ -32,7 +34,7 @@ impl LogBuffer {
         }
     }
 
-    pub fn extend(&mut self, lines: impl IntoIterator<Item = String>) {
+    pub fn extend(&mut self, lines: impl IntoIterator<Item = SafeText>) {
         for line in lines {
             self.push(line);
         }
@@ -88,7 +90,7 @@ impl LogBuffer {
     pub fn visible(&self, viewport: usize) -> impl Iterator<Item = &str> {
         let top = self.top(viewport);
         let end = (top + viewport).min(self.lines.len());
-        self.lines.range(top..end).map(String::as_str)
+        self.lines.range(top..end).map(SafeText::as_str)
     }
 }
 
@@ -98,7 +100,7 @@ mod tests {
 
     fn filled(cap: usize, n: usize) -> LogBuffer {
         let mut b = LogBuffer::new(cap);
-        b.extend((0..n).map(|i| i.to_string()));
+        b.extend((0..n).map(|i| SafeText::from(i.to_string())));
         b
     }
 
@@ -121,7 +123,7 @@ mod tests {
         assert_eq!(view(&b, 2), ["1", "2"]);
         b.push("5".into());
         assert_eq!(view(&b, 2), ["1", "2"]);
-        b.extend((6..20).map(|i| i.to_string()));
+        b.extend((6..20).map(|i| SafeText::from(i.to_string())));
         assert_eq!(view(&b, 2), ["15", "16"]);
     }
 
@@ -146,6 +148,13 @@ mod tests {
         let b = filled(10, 2);
         assert_eq!(view(&b, 5), ["0", "1"]);
         assert_eq!(b.top(5), 0);
+    }
+
+    #[test]
+    fn stored_lines_are_sanitized() {
+        let mut b = LogBuffer::new(4);
+        b.push(SafeText::from("ok \x1b[2Jcleared"));
+        assert_eq!(view(&b, 1), ["ok cleared"]);
     }
 
     #[test]

@@ -4,7 +4,9 @@
 //! events come from the terminal and a timer; later phases add API results as
 //! further `AppEvent` variants.
 
-use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent};
+use ratatui::crossterm::event::{
+    KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
 
 use crate::derive::images_in_use;
 use crate::fake::FakeLogs;
@@ -13,12 +15,14 @@ use crate::model::{
 };
 use crate::state::{ListCursor, LogBuffer};
 use crate::text::SafeText;
-use crate::ui::hits::HitMap;
+use crate::ui::hits::{Hit, HitMap};
 
 /// Maximum buffered log lines (design D5).
 pub const LOG_CAP: usize = 5000;
 /// Initial log tail length (design D5).
 pub const LOG_TAIL: usize = 500;
+/// Rows moved per mouse wheel notch.
+const WHEEL_STEP: isize = 3;
 /// Rows moved by PgUp/PgDn.
 const PAGE: isize = 10;
 /// A simulated log line arrives every this many ticks (≈437ms at a 250ms tick).
@@ -174,7 +178,7 @@ impl App {
     pub fn update(&mut self, ev: AppEvent) {
         match ev {
             AppEvent::Key(key) => self.on_key(key),
-            AppEvent::Mouse(_) => {}
+            AppEvent::Mouse(mouse) => self.on_mouse(mouse),
             AppEvent::Resize(w, h) => self.size = (w, h),
             AppEvent::Tick => self.on_tick(),
         }
@@ -281,7 +285,7 @@ impl App {
             }
             _ => Vec::new(),
         };
-        self.logs.extend(lines);
+        self.logs.extend(lines.into_iter().map(SafeText::from));
     }
 
     fn on_tick(&mut self) {
@@ -296,7 +300,7 @@ impl App {
             return;
         };
         if let Some(line) = self.fake_logs.next_line(&pod, container.as_str()) {
-            self.logs.push(line);
+            self.logs.push(SafeText::from(line));
         }
     }
 
@@ -370,6 +374,43 @@ impl App {
         };
         if let Some(r) = self.row_ref(kind, idx) {
             self.select(r);
+        }
+    }
+
+    /// Mouse input, resolved against the regions recorded by the last frame.
+    fn on_mouse(&mut self, mouse: MouseEvent) {
+        if self.help {
+            return;
+        }
+        let Some(hit) = self.hits.hit(mouse.column, mouse.row) else {
+            return;
+        };
+        match mouse.kind {
+            MouseEventKind::Down(MouseButton::Left) => match hit {
+                Hit::ListRow(kind, idx) => {
+                    self.set_focus(Focus::List(kind));
+                    self.cursors[kind.index()].select(idx);
+                    self.activate_cursor();
+                }
+                Hit::ListPane(kind) | Hit::ListTab(kind) => self.set_focus(Focus::List(kind)),
+                Hit::ViewerTab(idx) => self.set_tab(idx),
+                Hit::Viewer => self.set_focus(Focus::Viewer),
+            },
+            MouseEventKind::ScrollDown | MouseEventKind::ScrollUp => {
+                let delta = if mouse.kind == MouseEventKind::ScrollDown {
+                    WHEEL_STEP
+                } else {
+                    -WHEEL_STEP
+                };
+                match hit {
+                    Hit::ListRow(kind, _) | Hit::ListPane(kind) => {
+                        self.cursors[kind.index()].move_by(delta);
+                    }
+                    Hit::Viewer | Hit::ViewerTab(_) => self.scroll_viewer(delta),
+                    Hit::ListTab(_) => {}
+                }
+            }
+            _ => {}
         }
     }
 
