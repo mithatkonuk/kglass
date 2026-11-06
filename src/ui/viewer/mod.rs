@@ -6,17 +6,17 @@ mod service;
 mod storage;
 
 use ratatui::Frame;
-use ratatui::layout::Rect;
+use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph, Wrap};
 use unicode_width::UnicodeWidthStr;
 
 use super::theme::Theme;
-use crate::app::{App, Focus, ViewerTab};
+use crate::app::{App, Focus, ViewerTab, YamlState};
 use crate::fake::sample_yaml;
 use crate::model::{EventType, ResourceRef, format_age};
-use crate::text::truncate;
+use crate::text::{SafeText, truncate};
 
 const TAB_SEPARATOR: &str = " - ";
 /// Width of the value column's label in key/value sections.
@@ -33,9 +33,28 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &mut App, theme: &Theme) {
         .title_top(tab_strip(area, app, theme))
         .title_top(title(area, app, theme).right_aligned())
         .title_bottom(Line::styled(hint(app), theme.muted));
-    let inner = block.inner(area);
+    let mut inner = block.inner(area);
     frame.render_widget(block, area);
     app.hits.viewer = area;
+
+    // A deleted selection keeps its last content below an explanation.
+    if let Some(notice) = app.viewer_notice.clone()
+        && inner.height > 3
+    {
+        let [banner, rest] =
+            Layout::vertical([Constraint::Length(2), Constraint::Fill(1)]).areas(inner);
+        frame.render_widget(
+            Paragraph::new(vec![
+                Line::styled(format!("⊘ {notice}"), theme.warn),
+                Line::styled(
+                    "  Showing last known data; the live stream is closed.",
+                    theme.muted,
+                ),
+            ]),
+            banner,
+        );
+        inner = rest;
+    }
 
     match app.current_tab() {
         None => {
@@ -117,10 +136,7 @@ fn content(app: &App, tab: ViewerTab, theme: &Theme) -> Vec<Line<'static>> {
     };
     match tab {
         ViewerTab::Events => events_lines(app, &r, theme),
-        ViewerTab::Yaml => sample_yaml(&r, &app.snapshot)
-            .lines()
-            .map(|l| Line::raw(l.to_string()))
-            .collect(),
+        ViewerTab::Yaml => yaml_lines(app, &r, theme),
         _ => match &r {
             ResourceRef::Pod(_) => pod::lines(app, tab, theme),
             ResourceRef::Image(_) => image::lines(app, tab, theme),
@@ -128,6 +144,24 @@ fn content(app: &App, tab: ViewerTab, theme: &Theme) -> Vec<Line<'static>> {
             ResourceRef::Pvc(_) | ResourceRef::Pv(_) => storage::lines(app, tab, theme),
         },
     }
+}
+
+fn yaml_lines(app: &App, r: &ResourceRef, theme: &Theme) -> Vec<Line<'static>> {
+    let text = if app.is_live() {
+        match app.yaml_state() {
+            Some(YamlState::Ready(text)) => text.clone(),
+            Some(YamlState::Failed(e)) => return vec![Line::styled(format!("✕ {e}"), theme.err)],
+            Some(YamlState::Loading) | None => {
+                return vec![Line::styled("loading YAML…", theme.muted)];
+            }
+        }
+    } else {
+        sample_yaml(r, &app.snapshot)
+    };
+    // YAML comes from the cluster: sanitize every line before display.
+    text.lines()
+        .map(|l| Line::raw(SafeText::from(l).to_string()))
+        .collect()
 }
 
 pub(crate) fn section(title: &str, theme: &Theme) -> Line<'static> {

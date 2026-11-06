@@ -7,7 +7,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Wrap};
 
 use super::{events_lines, kv, note, section};
-use crate::app::{App, LOG_TAIL, ViewerTab};
+use crate::app::{App, LOG_TAIL, LogState, ViewerTab};
 use crate::model::{Pod, PodStatus, ResourceRef, format_age};
 use crate::ui::theme::Theme;
 
@@ -47,12 +47,18 @@ pub(super) fn draw_logs(frame: &mut Frame, area: Rect, app: &mut App, theme: &Th
         .collect();
     frame.render_widget(Paragraph::new(lines), body);
 
-    let streaming = pod.status == PodStatus::Running;
-    let (dot, state) = if streaming {
-        ("●", "streaming (sample)")
+    let (streaming, state) = if app.is_live() {
+        match &app.log_state {
+            LogState::Streaming => (true, "streaming".to_string()),
+            LogState::Ended(reason) => (false, format!("stream ended: {reason}")),
+            LogState::Idle => (false, "not streaming".to_string()),
+        }
+    } else if pod.status == PodStatus::Running {
+        (true, "streaming (sample)".to_string())
     } else {
-        ("○", "stream ended")
+        (false, "stream ended".to_string())
     };
+    let dot = if streaming { "●" } else { "○" };
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled(dot, if streaming { theme.ok } else { theme.muted }),

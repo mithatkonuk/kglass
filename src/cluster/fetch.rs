@@ -110,7 +110,7 @@ where
 pub struct Lists {
     pub pods: Result<Vec<Pod>, FetchError>,
     pub services: Result<Vec<Service>, FetchError>,
-    /// PVCs then PVs. Fails only when PVCs cannot be listed.
+    /// PVCs, then the PVs claimed from this namespace. Fails only when PVCs cannot be listed.
     pub storage: Result<Vec<StorageItem>, FetchError>,
     /// Set when PVCs listed but PVs (cluster scope) did not.
     pub storage_partial: Option<FetchError>,
@@ -167,7 +167,12 @@ pub async fn fetch_lists(client: &Client, ns: &str, now: Timestamp) -> Lists {
                 claims.iter().map(|c| convert::pvc(c, raw_pods)).collect();
             let partial = match volumes {
                 Ok(vs) => {
-                    items.extend(vs.iter().map(convert::pv));
+                    // PVs are cluster-scoped; show only those claimed from this namespace.
+                    items.extend(
+                        vs.iter()
+                            .filter(|v| claim_namespace(v) == Some(ns))
+                            .map(convert::pv),
+                    );
                     None
                 }
                 Err(e) => Some(e),
@@ -182,6 +187,13 @@ pub async fn fetch_lists(client: &Client, ns: &str, now: Timestamp) -> Lists {
         storage_partial,
         events: events.map(|es| es.iter().filter_map(|e| convert::event(e, now)).collect()),
     }
+}
+
+fn claim_namespace(v: &k8s::PersistentVolume) -> Option<&str> {
+    v.spec
+        .as_ref()
+        .and_then(|s| s.claim_ref.as_ref())
+        .and_then(|r| r.namespace.as_deref())
 }
 
 async fn yaml_of<K>(api: Api<K>, name: &str, action: Action<'_>) -> Result<String, FetchError>
@@ -345,81 +357,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cluster::testing::{NS, Reply, healthy, mock, status_json};
     use futures::StreamExt;
-    use http::{Request, Response};
-    use kube::client::Body;
-
-    const NS: &str = "shop";
-
-    fn list_json(kind: &str, items: &str) -> Vec<u8> {
-        format!(r#"{{"apiVersion":"v1","kind":"{kind}","metadata":{{}},"items":{items}}}"#)
-            .into_bytes()
-    }
-
-    fn status_json(code: u16, reason: &str, message: &str) -> Vec<u8> {
-        format!(
-            r#"{{"kind":"Status","apiVersion":"v1","metadata":{{}},"status":"Failure","message":"{message}","reason":"{reason}","code":{code}}}"#
-        )
-        .into_bytes()
-    }
-
-    /// HTTP status and body returned by the fake API server.
-    type Reply = Option<(u16, Vec<u8>)>;
-
-    /// A fake API server: `route(path)` returns (status, body) or `None` to hang forever.
-    fn mock(route: fn(&str) -> Reply) -> Client {
-        let service = tower::service_fn(move |req: Request<Body>| async move {
-            match route(req.uri().path()) {
-                Some((code, body)) => Ok::<_, std::convert::Infallible>(
-                    Response::builder()
-                        .status(code)
-                        .body(Body::from(body))
-                        .unwrap(),
-                ),
-                None => {
-                    tokio::time::sleep(Duration::from_secs(3600)).await;
-                    unreachable!("request should time out first")
-                }
-            }
-        });
-        Client::new(service, NS)
-    }
-
-    fn healthy(path: &str) -> Reply {
-        let fixture = |f: &str| match f {
-            "pods" => include_str!("../../tests/fixtures/pods.json"),
-            "services" => include_str!("../../tests/fixtures/services.json"),
-            "endpointslices" => include_str!("../../tests/fixtures/endpointslices.json"),
-            "pvcs" => include_str!("../../tests/fixtures/pvcs.json"),
-            "pvs" => include_str!("../../tests/fixtures/pvs.json"),
-            _ => include_str!("../../tests/fixtures/events.json"),
-        };
-        let body = match path {
-            "/api/v1/namespaces/shop/pods" => list_json("PodList", fixture("pods")),
-            "/api/v1/namespaces/shop/services" => list_json("ServiceList", fixture("services")),
-            "/apis/discovery.k8s.io/v1/namespaces/shop/endpointslices" => {
-                list_json("EndpointSliceList", fixture("endpointslices"))
-            }
-            "/api/v1/namespaces/shop/persistentvolumeclaims" => {
-                list_json("PersistentVolumeClaimList", fixture("pvcs"))
-            }
-            "/api/v1/persistentvolumes" => list_json("PersistentVolumeList", fixture("pvs")),
-            "/api/v1/namespaces/shop/events" => list_json("EventList", fixture("events")),
-            "/api/v1/namespaces/shop/pods/api-1/log" => {
-                b"line one\nbad \xff byte\nescape \x1b[2Jdone\n".to_vec()
-            }
-            "/api/v1/namespaces/shop/pods/api-1" => {
-                br#"{"apiVersion":"v1","kind":"Pod","metadata":{"name":"api-1","managedFields":[{}]}}"#.to_vec()
-            }
-            "/version" => br#"{"major":"1","minor":"36","gitVersion":"v1.36.4+rke2r1","gitCommit":"","gitTreeState":"","buildDate":"","goVersion":"","compiler":"","platform":""}"#.to_vec(),
-            "/api/v1/namespaces" => list_json(
-                "NamespaceList",
-                r#"[{"metadata":{"name":"default"}},{"metadata":{"name":"shop"}}]"#,
-            ),
-            _ => return Some((404, status_json(404, "NotFound", "not found"))),
-        };
-        Some((200, body))
-    }
 
     fn now() -> Timestamp {
         "2026-11-06T12:00:00Z".parse().unwrap()
@@ -432,7 +371,12 @@ mod tests {
         let services = lists.services.as_ref().unwrap();
         assert_eq!(services[0].ready_endpoints, 3);
         let storage = lists.storage.as_ref().unwrap();
-        assert_eq!(storage.len(), 4);
+        let names: Vec<&str> = storage.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(
+            names,
+            ["data-api", "cache", "pvc-3e1a", "pvc-77b2"],
+            "PVs claimed from other namespaces are not shown"
+        );
         assert_eq!(storage[0].mounted_by[0].as_str(), "api-1");
         assert!(lists.storage_partial.is_none());
         assert_eq!(lists.events.as_ref().unwrap().len(), 2);

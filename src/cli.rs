@@ -37,9 +37,24 @@ pub struct Args {
     /// Disable colours (also enabled by a non-empty NO_COLOR variable).
     #[arg(long)]
     pub no_color: bool,
+
+    /// Show built-in sample data instead of connecting to a cluster.
+    #[arg(long)]
+    pub demo: bool,
 }
 
 impl Args {
+    /// Reject flag combinations this version cannot honour yet.
+    pub fn check(&self) -> Result<(), String> {
+        if self.all_namespaces && !self.demo {
+            return Err(
+                "--all-namespaces is not supported yet (planned for phase 3); use -n <namespace>"
+                    .to_string(),
+            );
+        }
+        Ok(())
+    }
+
     /// Startup options; `no_color_env` is the value of `NO_COLOR`, if set.
     pub fn to_options(&self, no_color_env: Option<&str>) -> AppOptions {
         AppOptions {
@@ -87,6 +102,30 @@ mod tests {
         assert!(!a.to_options(None).plain);
         let b = Args::try_parse_from(["kglass", "--no-color"]).unwrap();
         assert!(b.to_options(None).plain);
+    }
+
+    #[test]
+    fn demo_flag() {
+        assert!(Args::try_parse_from(["kglass", "--demo"]).unwrap().demo);
+        assert!(!Args::try_parse_from(["kglass"]).unwrap().demo);
+    }
+
+    #[test]
+    fn all_namespaces_rejected_for_now() {
+        let a = Args::try_parse_from(["kglass", "-A"]).unwrap();
+        assert!(a.check().unwrap_err().contains("not supported yet"));
+        assert!(
+            Args::try_parse_from(["kglass", "-n", "x"])
+                .unwrap()
+                .check()
+                .is_ok()
+        );
+        assert!(
+            Args::try_parse_from(["kglass", "-A", "--demo"])
+                .unwrap()
+                .check()
+                .is_ok()
+        );
     }
 
     #[test]

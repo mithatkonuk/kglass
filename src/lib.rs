@@ -7,6 +7,7 @@ pub mod command;
 pub mod derive;
 pub mod fake;
 pub mod model;
+pub mod runtime;
 pub mod state;
 pub mod text;
 pub mod ui;

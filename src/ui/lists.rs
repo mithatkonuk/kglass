@@ -4,12 +4,13 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Cell, Paragraph, Row, Table, TableState};
+use ratatui::widgets::{Block, Cell, Paragraph, Row, Table, TableState, Wrap};
 use unicode_width::UnicodeWidthStr;
 
 use super::layout::LayoutMode;
 use super::theme::Theme;
-use crate::app::{App, Focus};
+use crate::app::{App, Focus, PaneStatus};
+use crate::cluster::fetch::FetchError;
 use crate::model::{PodStatus, ResourceKind, format_age, format_ports};
 use crate::text::truncate;
 
@@ -226,22 +227,55 @@ pub fn draw_list(
     } else {
         theme.border
     };
+    let mut title = vec![Span::styled(pane_title(app, kind), theme.title)];
+    if app.is_stale(kind) {
+        title.push(Span::styled(" · STALE", theme.warn));
+    }
     let block = Block::bordered()
         .border_style(border)
-        .title(Span::styled(pane_title(app, kind), theme.title))
+        .title(Line::from(title))
         .title_top(Line::styled(pane_subtitle(app, kind), theme.muted).right_aligned());
-    let inner = block.inner(area);
+    let mut inner = block.inner(area);
     frame.render_widget(block, area);
     app.hits.panes.push((area, kind));
 
+    let status = app.panes[kind.index()].clone();
     if app.row_count(kind) == 0 {
-        let msg = format!(
-            "No {} in {}",
-            kind.title().to_lowercase(),
-            app.snapshot.namespace
-        );
-        frame.render_widget(Paragraph::new(Span::styled(msg, theme.muted)), inner);
+        let lines = match &status {
+            PaneStatus::Loading { since_tick } => vec![loading_line(app, kind, *since_tick, theme)],
+            PaneStatus::Failed(e) => error_lines(e, theme),
+            PaneStatus::Ready | PaneStatus::Partial(_) => vec![Line::styled(
+                format!(
+                    "No {} in {}",
+                    kind.title().to_lowercase(),
+                    app.snapshot.namespace
+                ),
+                theme.muted,
+            )],
+        };
+        frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
         return;
+    }
+
+    // Rows are shown; a failed or partial refresh gets a one-line note at the bottom.
+    let note = match &status {
+        PaneStatus::Partial(e) => Some(format!("PVs hidden: {e}")),
+        PaneStatus::Failed(e) => Some(format!("refresh failed: {e}")),
+        PaneStatus::Loading { .. } | PaneStatus::Ready => None,
+    };
+    if let Some(note) = note
+        && inner.height > 2
+    {
+        let [rows, note_area] =
+            Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]).areas(inner);
+        frame.render_widget(
+            Paragraph::new(Span::styled(
+                truncate(&note, usize::from(note_area.width)),
+                theme.warn,
+            )),
+            note_area,
+        );
+        inner = rows;
     }
 
     let cols = columns(kind, mode);
@@ -304,16 +338,55 @@ pub fn draw_list(
     }
 }
 
+const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+fn loading_line(app: &App, kind: ResourceKind, since_tick: u64, theme: &Theme) -> Line<'static> {
+    let elapsed = app.ticks().saturating_sub(since_tick);
+    let frame = SPINNER[usize::try_from(elapsed % 10).unwrap_or(0)];
+    let secs = elapsed * crate::runtime::TICK.as_millis() as u64 / 1000;
+    Line::styled(
+        format!("{frame} loading {}… ({secs}s)", kind.title().to_lowercase()),
+        theme.key,
+    )
+}
+
+/// Explain a failed list, with the exact permission needed for 403s.
+fn error_lines(error: &FetchError, theme: &Theme) -> Vec<Line<'static>> {
+    match error {
+        FetchError::Forbidden {
+            verb,
+            resource,
+            scope,
+            ..
+        } => vec![
+            Line::styled("✕ Forbidden (403)", theme.err),
+            Line::raw(format!("cannot {verb} {resource} at the {scope} scope")),
+            Line::default(),
+            Line::styled(
+                format!("Needed (read-only): {resource}: get, list"),
+                theme.muted,
+            ),
+        ],
+        other => vec![
+            Line::styled(format!("✕ {other}"), theme.err),
+            Line::styled("r retry", theme.muted),
+        ],
+    }
+}
+
 pub fn draw_context(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
     let snap = &app.snapshot;
-    let line = Line::from(vec![
+    let mut spans = vec![
         Span::styled("context ", theme.muted),
         Span::styled(snap.context.as_str(), theme.title),
         Span::styled("  namespace ", theme.muted),
         Span::styled(snap.namespace.as_str(), theme.title),
-        Span::styled("  user ", theme.muted),
-        Span::styled(snap.user.as_str(), theme.title),
-    ]);
+    ];
+    if !snap.user.as_str().is_empty() {
+        spans.push(Span::styled("  user ", theme.muted));
+        spans.push(Span::styled(snap.user.as_str(), theme.title));
+    }
+    let line = Line::from(spans);
     frame.render_widget(
         Paragraph::new(line).block(
             Block::bordered()

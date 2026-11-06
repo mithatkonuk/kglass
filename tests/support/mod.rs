@@ -71,3 +71,33 @@ pub fn render_to_string(app: &mut App, w: u16, h: u16) -> String {
     }
     out
 }
+
+/// A live app that has not received any data yet.
+pub fn live_app() -> App {
+    App::new_live(
+        kglass::app::LiveTarget {
+            context: "dev-01".into(),
+            namespace: "product-test".into(),
+        },
+        false,
+    )
+}
+
+/// Lists built from the sample snapshot, as the API would return them.
+pub fn sample_lists() -> kglass::cluster::fetch::Lists {
+    let snap = sample_snapshot();
+    kglass::cluster::fetch::Lists {
+        pods: Ok(snap.pods),
+        services: Ok(snap.services),
+        storage: Ok(snap.storage),
+        storage_partial: None,
+        events: Ok(snap.events),
+    }
+}
+
+pub fn lists_event(lists: kglass::cluster::fetch::Lists) -> AppEvent {
+    AppEvent::Data(kglass::app::DataEvent::Lists {
+        generation: 0,
+        lists: Box::new(lists),
+    })
+}

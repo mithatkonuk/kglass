@@ -1,29 +1,65 @@
-//! `kglass` binary: parse flags, set up the terminal, pump events into `App`.
+//! `kglass` binary: parse flags, pick the cluster like kubectl, run the TUI.
 
 use std::io::stdout;
-use std::time::{Duration, Instant};
+use std::path::PathBuf;
+use std::process::ExitCode;
 
 use clap::Parser;
-use color_eyre::Result;
-use kglass::app::{App, AppEvent};
+use kglass::app::{App, LiveTarget};
 use kglass::cli::Args;
+use kglass::cluster::config::{client_for, load_kubeconfig, resolve};
 use kglass::fake::sample_snapshot;
-use kglass::ui;
-use ratatui::DefaultTerminal;
-use ratatui::crossterm::event::{self, DisableMouseCapture, EnableMouseCapture, Event};
+use kglass::runtime;
+use kglass::text::SafeText;
+use ratatui::crossterm::event::{DisableMouseCapture, EnableMouseCapture};
 use ratatui::crossterm::execute;
 
-/// Interval between `AppEvent::Tick`s (drives simulated log streaming).
-const TICK: Duration = Duration::from_millis(250);
-
-fn main() -> Result<()> {
-    color_eyre::install()?;
+#[tokio::main]
+async fn main() -> ExitCode {
+    if let Err(e) = color_eyre::install() {
+        eprintln!("kglass: {e}");
+    }
     let args = Args::parse();
+    if let Err(message) = args.check() {
+        eprintln!("kglass: {message}");
+        return ExitCode::from(2);
+    }
     let options = args.to_options(std::env::var("NO_COLOR").ok().as_deref());
-    let app = App::new(sample_snapshot(), options);
 
-    // `ratatui::init` enters raw mode and the alternate screen, and installs a
-    // panic hook that restores both. Wrap it so mouse reporting is turned off too.
+    let (app, client, namespace) = if args.demo {
+        (App::new(sample_snapshot(), options), None, String::new())
+    } else {
+        let env = std::env::var("KUBECONFIG").ok();
+        let home = std::env::var_os("HOME").map(PathBuf::from);
+        let target =
+            match load_kubeconfig(args.kubeconfig.as_deref(), env.as_deref(), home.as_deref())
+                .and_then(|kc| resolve(kc, args.context.as_deref(), args.namespace.as_deref()))
+            {
+                Ok(t) => t,
+                Err(e) => {
+                    eprintln!("kglass: {e}\nRun `kglass --demo` to try it with sample data.");
+                    return ExitCode::FAILURE;
+                }
+            };
+        let client = match client_for(&target).await {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("kglass: {e}");
+                return ExitCode::FAILURE;
+            }
+        };
+        let app = App::new_live(
+            LiveTarget {
+                context: SafeText::from(target.context.as_str()),
+                namespace: SafeText::from(target.namespace.as_str()),
+            },
+            options.plain,
+        );
+        (app, Some(client), target.namespace)
+    };
+
+    // `ratatui::init` enters raw mode and the alternate screen and installs a panic
+    // hook that restores both. Wrap it so mouse reporting is turned off too.
     let mut terminal = ratatui::init();
     let restore_terminal = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
@@ -31,32 +67,18 @@ fn main() -> Result<()> {
         restore_terminal(info);
     }));
 
-    let result = execute!(stdout(), EnableMouseCapture)
-        .map_err(Into::into)
-        .and_then(|()| run(&mut terminal, app));
+    let result = match execute!(stdout(), EnableMouseCapture) {
+        Ok(()) => runtime::run(&mut terminal, app, client, namespace).await,
+        Err(e) => Err(e.into()),
+    };
 
     let _ = execute!(stdout(), DisableMouseCapture);
     ratatui::restore();
-    result
-}
-
-fn run(terminal: &mut DefaultTerminal, mut app: App) -> Result<()> {
-    let mut last_tick = Instant::now();
-    while !app.quit {
-        terminal.draw(|frame| ui::draw(frame, &mut app))?;
-        let timeout = TICK.saturating_sub(last_tick.elapsed());
-        if event::poll(timeout)? {
-            match event::read()? {
-                Event::Key(key) => app.update(AppEvent::Key(key)),
-                Event::Mouse(mouse) => app.update(AppEvent::Mouse(mouse)),
-                Event::Resize(w, h) => app.update(AppEvent::Resize(w, h)),
-                _ => {}
-            }
-        }
-        if last_tick.elapsed() >= TICK {
-            app.update(AppEvent::Tick);
-            last_tick = Instant::now();
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("kglass: {e}");
+            ExitCode::FAILURE
         }
     }
-    Ok(())
 }

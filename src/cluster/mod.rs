@@ -4,3 +4,6 @@
 pub mod config;
 pub mod convert;
 pub mod fetch;
+
+#[cfg(test)]
+pub(crate) mod testing;
