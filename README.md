@@ -2,17 +2,23 @@
 
 A fast, **read-only** terminal viewer for Kubernetes clusters. Pick a pod, image, service or volume from the lists on the left, and the large viewer on the right shows its logs, details and related resources.
 
-> **Status: phase 1 prototype.** It runs on built-in sample data only and does not connect to a cluster yet. Cluster access (kubeconfig, contexts, namespaces) arrives in phase 2.
+> **Status: phase 2.** Connects to your real cluster, read-only. Uses the same kubeconfig, context and namespace that `kubectl` would.
 
-## Features (prototype)
+## Features
 
-- Wide layout with all four lists (Pods, Images, Services, Storage) next to a large viewer. Below 120 columns it switches to a narrow layout with list tabs.
-- Pods open on their **logs**: a container switcher, follow mode, a buffer capped at 5000 lines, and simulated streaming.
-- **Summary, Events, YAML and Containers** tabs for pods. Service details include endpoint health and selector-matched pods. Claim/volume details show storage relationships.
-- Inferred relationships are labelled `[derived]`, because a selector match shows configuration, not network reachability.
-- Full keyboard control plus optional mouse. See [docs/keybindings.md](docs/keybindings.md).
-- Status is never shown by colour alone. `--no-color` or `NO_COLOR=1` turns colours off.
-- Cluster text is sanitized before display, so escape sequences in names or logs can't control your terminal.
+- **Opens where kubectl points.** It honours `$KUBECONFIG` (a colon-separated list, merged), `current-context`, and the namespace set by `kubens`/`kubectl config set-context`. The flags `--kubeconfig`, `--context` and `-n` work like kubectl's.
+- **Live lists of Pods, Images, Services and Storage**, refreshed every 10s (or with `r`):
+  - Images are worked out from the pod specs.
+  - Storage shows the namespace's claims and the volumes bound to them.
+- **The viewer shows the selected resource:**
+  - Pods open on **live logs**, with a container switcher, follow mode and a buffer capped at 5000 lines.
+  - Every resource has Summary/Details, Events and YAML tabs.
+  - Service details show endpoint health and which pods match the selector.
+- **Switch without leaving the app.** `x` picks a context and `n` picks a namespace. The switch lasts for the session only; kglass never writes to your kubeconfig. `/` filters a list by name.
+- **Honest about problems.** Each pane shows its own state: loading, `Forbidden (403)` with the exact permission needed, timeouts, or stale data after a failed refresh. One failure never blanks the rest. Expired credentials show `● Disconnected` in the header.
+- **Strictly read-only.** kglass only ever lists, gets and follows logs. It never reads Secrets and never shows credentials.
+- **Safe display.** Cluster text is sanitized, so escape sequences in names or logs can't control your terminal.
+- **Accessible.** Full keyboard control, with an optional mouse (see [docs/keybindings.md](docs/keybindings.md)). Status is never shown by colour alone, and `--no-color` or `NO_COLOR=1` turns colours off.
 
 ## Install
 
@@ -24,16 +30,26 @@ cargo install --locked --path .
 
 This puts `kglass` in `~/.cargo/bin`. `--locked` builds with the dependency versions tested in `Cargo.lock`.
 
-## Run from source
+## Usage
 
 ```bash
-cargo run --release
+kglass                        # current context and namespace, like kubectl
+kglass -n payments            # another namespace
+kglass --context dev-west     # another context
+kglass --demo                 # built-in sample data, no cluster needed
 ```
 
-The flags match kubectl. In phase 1 they only change the labels shown in the header:
+`-A/--all-namespaces` is not supported yet.
+
+### Permissions
+
+Read-only RBAC is enough: `get` and `list` on pods, `pods/log`, services, endpointslices, persistentvolumeclaims and events in the namespace. Listing persistentvolumes (cluster scope) and namespaces is optional; without it, those parts show a clear "Forbidden" note.
+
+### Troubleshooting
 
 ```bash
-cargo run -- --context dev-east -n payments
+cargo run --example probe            # fetch once from your current kubeconfig and print counts
+cargo run --example probe -- --frame # also render one screen
 ```
 
 ## Development

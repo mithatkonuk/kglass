@@ -15,6 +15,10 @@ Everything works with the keyboard alone. The mouse is optional.
 | `c` | Next container (pod logs) |
 | `f` | Toggle follow mode (pod logs). Scrolling up also leaves follow mode |
 | `z` | Zoom the viewer to full screen |
+| `/` | Filter the focused list by name (type, `Enter` keeps it, `Esc` clears it) |
+| `x` | Switch context (from kubeconfig; type to filter, `Enter` switches) |
+| `n` | Switch namespace (type a name if listing namespaces is not allowed) |
+| `r` | Refresh now (lists refresh every 10s anyway) |
 | `?` | Toggle help |
 | `Esc` | Close help, or leave zoom |
 | `q` / `Ctrl+C` | Quit |
