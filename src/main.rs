@@ -69,6 +69,11 @@ async fn main() -> ExitCode {
     let mut terminal = ratatui::init();
     let restore_terminal = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
+        // Background tasks are guarded and report failures on the panes; restoring
+        // the terminal for them would break the screen of a still-running UI.
+        if std::thread::current().name() != Some("main") {
+            return;
+        }
         let _ = execute!(stdout(), DisableMouseCapture);
         restore_terminal(info);
     }));

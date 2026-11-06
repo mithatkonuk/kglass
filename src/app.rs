@@ -67,7 +67,10 @@ pub enum DataEvent {
         target: ResourceRef,
         result: Result<String, FetchError>,
     },
-    Namespaces(Result<Vec<SafeText>, FetchError>),
+    Namespaces {
+        generation: u64,
+        result: Result<Vec<SafeText>, FetchError>,
+    },
 }
 
 /// Where the data comes from.
@@ -408,7 +411,7 @@ impl App {
                     };
                 }
             }
-            DataEvent::Namespaces(result) => {
+            DataEvent::Namespaces { generation, result } if generation == self.generation => {
                 if let Some(picker) = &mut self.picker
                     && picker.kind == PickerKind::Namespace
                 {
@@ -462,7 +465,9 @@ impl App {
             return;
         }
         self.picker = Some(Picker::new(PickerKind::Namespace));
-        self.commands.push(Command::FetchNamespaces);
+        self.commands.push(Command::FetchNamespaces {
+            generation: self.generation,
+        });
     }
 
     fn on_picker_key(&mut self, key: KeyEvent) {
@@ -1866,13 +1871,23 @@ mod tests {
         fn n_lists_namespaces_and_switches_namespace() {
             let mut a = loaded();
             a.update(key(KeyCode::Char('n')));
-            assert_eq!(a.take_commands(), [Command::FetchNamespaces]);
+            assert_eq!(
+                a.take_commands(),
+                [Command::FetchNamespaces { generation: 0 }]
+            );
             assert!(a.picker.as_ref().unwrap().loading);
-            a.update(data(DataEvent::Namespaces(Ok(vec![
-                "kube-system".into(),
-                "shop".into(),
-                "team-a".into(),
-            ]))));
+            a.update(data(DataEvent::Namespaces {
+                generation: 3,
+                result: Ok(vec!["old".into()]),
+            }));
+            assert!(
+                a.picker.as_ref().unwrap().loading,
+                "answer for another generation is dropped"
+            );
+            a.update(data(DataEvent::Namespaces {
+                generation: 0,
+                result: Ok(vec!["kube-system".into(), "shop".into(), "team-a".into()]),
+            }));
             assert_eq!(
                 a.picker.as_ref().unwrap().chosen().unwrap().as_str(),
                 "shop"
@@ -1895,7 +1910,10 @@ mod tests {
             let mut a = loaded();
             a.update(key(KeyCode::Char('n')));
             a.take_commands();
-            a.update(data(DataEvent::Namespaces(Err(FetchError::Timeout))));
+            a.update(data(DataEvent::Namespaces {
+                generation: 0,
+                result: Err(FetchError::Timeout),
+            }));
             typed(&mut a, "secret-team");
             a.update(key(KeyCode::Enter));
             assert!(a.take_commands().contains(&Command::SwitchTarget {

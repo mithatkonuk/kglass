@@ -228,9 +228,10 @@ fn namespace_picker_loading_and_error() {
         s.contains("[n]─Switch namespace") && s.contains("loading namespaces…"),
         "{s}"
     );
-    a.update(AppEvent::Data(DataEvent::Namespaces(Err(
-        FetchError::Timeout,
-    ))));
+    a.update(AppEvent::Data(DataEvent::Namespaces {
+        generation: 0,
+        result: Err(FetchError::Timeout),
+    }));
     let s = render_to_string(&mut a, 160, 48);
     assert!(
         s.contains("✕ cannot list namespaces: timed out after 15s"),

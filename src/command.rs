@@ -17,7 +17,7 @@ pub enum Command {
     /// Stop the running log stream, if any.
     StopLogs,
     /// List namespaces for the namespace picker.
-    FetchNamespaces,
+    FetchNamespaces { generation: u64 },
     /// Use another context and/or namespace for this session (never written to kubeconfig).
     SwitchTarget {
         context: SafeText,

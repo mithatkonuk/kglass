@@ -72,24 +72,27 @@ impl Executor {
             return;
         }
         let Some(client) = self.client.clone() else {
-            self.report_switch_error(&command).await;
+            self.report_switch_error(&command);
             return;
         };
         let tx = self.tx.clone();
         let ns = self.namespace.clone();
         match command {
             Command::SwitchTarget { .. } => unreachable!("handled above"),
-            Command::FetchNamespaces => {
+            Command::FetchNamespaces { generation } => {
                 tokio::spawn(async move {
                     let result = fetch::namespaces(&client).await;
-                    let _ = tx.send(DataEvent::Namespaces(result)).await;
+                    let _ = tx.send(DataEvent::Namespaces { generation, result }).await;
                 });
             }
             Command::Refresh { generation } => {
                 let version_client = client.clone();
                 let version_tx = tx.clone();
                 tokio::spawn(async move {
-                    let lists = fetch::fetch_lists(&client, &ns, Timestamp::now()).await;
+                    let lists = guarded_lists(async move {
+                        fetch::fetch_lists(&client, &ns, Timestamp::now()).await
+                    })
+                    .await;
                     let _ = tx
                         .send(DataEvent::Lists {
                             generation,
@@ -164,45 +167,54 @@ impl Executor {
             return;
         };
         let target = Target {
-            kubeconfig,
+            kubeconfig: non_interactive(kubeconfig),
             context,
             namespace,
         };
-        match client_for(&target).await {
-            Ok(client) => self.client = Some(client),
-            Err(e) => {
-                self.client = None;
-                self.switch_error = Some(FetchError::Unreachable(SafeText::from(e.to_string())));
-            }
+        let built = tokio::time::timeout(fetch::REQUEST_TIMEOUT, client_for(&target)).await;
+        match built {
+            Ok(Ok(client)) => self.client = Some(client),
+            Ok(Err(e)) => self.fail_switch(FetchError::Unreachable(SafeText::from(e.to_string()))),
+            Err(_) => self.fail_switch(FetchError::Timeout),
         }
     }
 
-    /// After a failed switch, answer refreshes with the error so panes do not wait forever.
-    async fn report_switch_error(&self, command: &Command) {
-        let (Some(error), Command::Refresh { generation }) = (&self.switch_error, command) else {
+    fn fail_switch(&mut self, error: FetchError) {
+        self.client = None;
+        self.switch_error = Some(error);
+    }
+
+    /// After a failed switch, answer requests with the error so nothing waits forever.
+    /// Uses `try_send`: this runs on the UI loop, which is the channel's only reader.
+    fn report_switch_error(&self, command: &Command) {
+        let Some(error) = &self.switch_error else {
             return;
         };
-        let lists = fetch::Lists {
-            pods: Err(error.clone()),
-            services: Err(error.clone()),
-            storage: Err(error.clone()),
-            storage_partial: None,
-            events: Err(error.clone()),
-        };
-        let _ = self
-            .tx
-            .send(DataEvent::Version {
+        let events = match command {
+            Command::Refresh { generation } => vec![
+                DataEvent::Version {
+                    generation: *generation,
+                    result: Err(error.clone()),
+                },
+                DataEvent::Lists {
+                    generation: *generation,
+                    lists: Box::new(error_lists(error)),
+                },
+            ],
+            Command::FetchYaml { generation, target } => vec![DataEvent::Yaml {
+                generation: *generation,
+                target: target.clone(),
+                result: Err(error.clone()),
+            }],
+            Command::FetchNamespaces { generation } => vec![DataEvent::Namespaces {
                 generation: *generation,
                 result: Err(error.clone()),
-            })
-            .await;
-        let _ = self
-            .tx
-            .send(DataEvent::Lists {
-                generation: *generation,
-                lists: Box::new(lists),
-            })
-            .await;
+            }],
+            _ => Vec::new(),
+        };
+        for event in events {
+            let _ = self.tx.try_send(event);
+        }
     }
 
     fn stop_logs(&mut self) {
@@ -216,6 +228,41 @@ impl Drop for Executor {
     fn drop(&mut self) {
         self.stop_logs();
     }
+}
+
+/// Every list failing with the same error.
+fn error_lists(error: &FetchError) -> fetch::Lists {
+    fetch::Lists {
+        pods: Err(error.clone()),
+        services: Err(error.clone()),
+        storage: Err(error.clone()),
+        storage_partial: None,
+        events: Err(error.clone()),
+    }
+}
+
+/// Run a refresh in its own task so a panic becomes an error on the panes instead
+/// of a refresh that never answers (which would stop auto-refresh for good).
+async fn guarded_lists(
+    refresh: impl Future<Output = fetch::Lists> + Send + 'static,
+) -> fetch::Lists {
+    match tokio::spawn(refresh).await {
+        Ok(lists) => lists,
+        Err(_) => error_lists(&FetchError::Api {
+            code: 0,
+            message: SafeText::from("internal error: refresh failed"),
+        }),
+    }
+}
+
+/// Credential plugins cannot prompt while the TUI owns the terminal.
+fn non_interactive(mut kubeconfig: Kubeconfig) -> Kubeconfig {
+    for named in &mut kubeconfig.auth_infos {
+        if let Some(exec) = named.auth_info.as_mut().and_then(|a| a.exec.as_mut()) {
+            exec.interactive_mode = Some(kube::config::ExecInteractiveMode::Never);
+        }
+    }
+    kubeconfig
 }
 
 /// Resolves on SIGTERM, SIGHUP or SIGINT so the terminal can be restored.
@@ -414,9 +461,12 @@ mod tests {
     #[tokio::test]
     async fn namespaces_listed_for_picker() {
         let (mut ex, mut rx) = executor();
-        ex.run(Command::FetchNamespaces).await;
+        ex.run(Command::FetchNamespaces { generation: 0 }).await;
         match next(&mut rx).await {
-            DataEvent::Namespaces(Ok(names)) => assert_eq!(names.len(), 2),
+            DataEvent::Namespaces {
+                generation: 0,
+                result: Ok(names),
+            } => assert_eq!(names.len(), 2),
             other => panic!("unexpected {other:?}"),
         }
     }
@@ -463,6 +513,83 @@ mod tests {
             }
         }
         assert!(saw_version_error && saw_list_error);
+    }
+
+    #[tokio::test]
+    async fn failed_switch_answers_yaml_and_namespaces() {
+        let (tx, mut rx) = mpsc::channel(8);
+        let mut ex = Executor::new(None, "a".into(), tx).with_kubeconfig(fixture_kubeconfig());
+        ex.run(Command::SwitchTarget {
+            context: "nope".into(),
+            namespace: "x".into(),
+        })
+        .await;
+        ex.run(Command::FetchYaml {
+            generation: 1,
+            target: crate::model::ResourceRef::Pod("p".into()),
+        })
+        .await;
+        ex.run(Command::FetchNamespaces { generation: 1 }).await;
+        assert!(matches!(
+            next(&mut rx).await,
+            DataEvent::Yaml { result: Err(_), .. }
+        ));
+        assert!(matches!(
+            next(&mut rx).await,
+            DataEvent::Namespaces {
+                generation: 1,
+                result: Err(_)
+            }
+        ));
+    }
+
+    #[tokio::test]
+    async fn failure_report_never_blocks_on_full_channel() {
+        let (tx, _rx) = mpsc::channel(1);
+        tx.try_send(DataEvent::LogEnded {
+            session: 0,
+            error: None,
+        })
+        .unwrap();
+        let mut ex = Executor::new(None, "a".into(), tx).with_kubeconfig(fixture_kubeconfig());
+        ex.run(Command::SwitchTarget {
+            context: "nope".into(),
+            namespace: "x".into(),
+        })
+        .await;
+        let done = tokio::time::timeout(
+            Duration::from_secs(1),
+            ex.run(Command::Refresh { generation: 1 }),
+        )
+        .await;
+        assert!(done.is_ok(), "run must not wait for channel space");
+    }
+
+    #[tokio::test]
+    async fn panicking_refresh_reports_error_lists() {
+        let lists = guarded_lists(async { panic!("boom") }).await;
+        assert!(matches!(lists.pods, Err(FetchError::Api { code: 0, .. })));
+        assert!(lists.services.is_err() && lists.storage.is_err() && lists.events.is_err());
+    }
+
+    #[test]
+    fn switching_never_runs_plugins_interactively() {
+        let kc = kube::config::Kubeconfig::from_yaml(
+            "apiVersion: v1\nkind: Config\nusers:\n- name: u\n  user:\n    exec:\n      apiVersion: client.authentication.k8s.io/v1\n      command: login-helper\n      interactiveMode: Always\n",
+        )
+        .unwrap();
+        let kc = non_interactive(kc);
+        let exec = kc.auth_infos[0]
+            .auth_info
+            .as_ref()
+            .unwrap()
+            .exec
+            .as_ref()
+            .unwrap();
+        assert_eq!(
+            exec.interactive_mode,
+            Some(kube::config::ExecInteractiveMode::Never)
+        );
     }
 
     #[tokio::test]
