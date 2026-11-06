@@ -244,13 +244,25 @@ Testing follows plan §12: unit tests for row formatting, image dedup, relations
     - `-A` moved to phase 4.
     - Ghost rows dropped; the "no longer present" banner covers the case.
     - Search matches the raw line, ignoring ASCII case.
-- **Phase 4 (hardening & beta) backlog:**
-  - `-A/--all-namespaces`, which needs namespace-qualified `ResourceRef`s
-  - CI (fmt, clippy, test on macOS and Linux) and release binaries
-  - `docs/rbac.md` with a minimal read-only Role/ClusterRole
-  - testing on more terminals: iTerm2, Terminal.app, a Linux terminal
-  - README screenshots or GIF
-  - a GitHub repository, plus SECURITY.md / CONTRIBUTING.md
-  - optional: log search over the formatted text, and events for more kinds
+- 2026-11-06: **Phase 4 done: hardening & beta** (plan [`plan-phase4.md`](plan-phase4.md)).
+  - **What's new:**
+    - `-A/--all-namespaces`, with `namespace/name` keys and same-namespace relations
+    - an RBAC guide kept in sync with the code's declared permission list
+    - CI and tagged-release workflows, checked locally
+    - SECURITY / CONTRIBUTING / CODE_OF_CONDUCT
+    - a README screenshot generated from `--demo`
+  - **Tests:** 242 passing.
+  - **Real cluster:** `-A` on the dev cluster listed 684 pods in 40 namespaces, matching kubectl, and the installed binary drove filter, open, YAML and the namespace picker cleanly.
+  - **Bugs found along the way:**
+    - The screenshot exposed invisible muted text on unfocused highlighted rows; fixed, with a test.
+    - The review found a cross-namespace Pod→Service relation; fixed, with a test.
+  - **Not verified here:**
+    - A Linux build. A local cross-check fails in ring's C build without a Linux cross-compiler, so it is covered by CI on ubuntu.
+    - The GitHub workflows themselves, which only run after publishing.
+    - Manual checks in other terminal emulators.
+- **Remaining before 1.0:**
+  - publish the repository (owner's decision)
+  - watch the first CI run
+  - tag v0.1.0
+  - try kglass in iTerm2, Terminal.app and a Linux terminal
 - **Release 2** (write actions) needs its own safety design before any code.
-- **Next:** write `docs/plan-phase4.md`.
