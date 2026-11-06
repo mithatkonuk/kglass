@@ -204,4 +204,5 @@ Testing follows plan §12: unit tests for row formatting, image dedup, relations
   - Restore the terminal on SIGTERM/SIGHUP (tokio signal handling arrives with tokio).
   - Answer Q7.
   - `--kubeconfig` is accepted but not used yet.
+  - Real-world startup check for D15: the owner's shell has `KUBECONFIG=~/.kube/dev-a:~/.kube/dev-b`, a colon-separated list that must be merged. `current-context` is `dev-cluster-01` with namespace `team-namespace`. Plain `kglass` must open exactly there.
 - **Next:** write `docs/plan-phase2.md`, covering real kubeconfig loading per D15, the context/namespace pickers, real lists with loading/403/stale states, filter and refresh.
