@@ -1,0 +1,7 @@
+[
+  {"metadata":{"name":"e1","namespace":"shop"},"involvedObject":{"kind":"Pod","name":"billing-0"},"type":"Warning","reason":"BackOff",
+   "message":"Back-off restarting failed container","count":17,"lastTimestamp":"2026-11-06T11:59:00Z"},
+  {"metadata":{"name":"e2","namespace":"shop"},"involvedObject":{"kind":"Service","name":"api"},"type":"Normal","reason":"Updated",
+   "message":"ok","series":{"count":4,"lastObservedTime":"2026-11-06T11:50:00.000000Z"},"eventTime":"2026-11-06T11:40:00.000000Z"},
+  {"metadata":{"name":"e3","namespace":"shop"},"involvedObject":{"kind":"Deployment","name":"api"},"type":"Normal","reason":"ScalingReplicaSet","message":"x"}
+]

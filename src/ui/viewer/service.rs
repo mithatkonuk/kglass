@@ -105,7 +105,7 @@ fn details(svc: &Service, matching: &[&Pod], theme: &Theme) -> Vec<Line<'static>
         lines.push(Line::from(vec![
             Span::styled("  → ", theme.key),
             Span::styled(format!("{:<24}", p.name.as_str()), theme.key),
-            Span::raw(format!("{:<18}", p.status.label())),
+            Span::raw(format!("{:<18}", p.status_label())),
             derived_tag(theme),
         ]));
     }
@@ -127,9 +127,9 @@ fn endpoints(svc: &Service, matching: &[&Pod], theme: &Theme) -> Vec<Line<'stati
         },
     )];
     lines.push(Line::default());
-    let target = svc.ports.first().map(|p| p.target_port);
+    let target = svc.ports.first().map(|p| p.target_port.clone());
     for p in matching {
-        let addr = match target {
+        let addr = match &target {
             Some(port) => format!("{}:{port}", p.pod_ip),
             None => p.pod_ip.to_string(),
         };

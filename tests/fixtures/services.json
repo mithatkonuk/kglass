@@ -1,0 +1,7 @@
+[
+  {"metadata":{"name":"api","namespace":"shop"},"spec":{"type":"ClusterIP","clusterIP":"10.96.14.22","selector":{"app":"api"},
+    "ports":[{"port":80,"targetPort":8080,"protocol":"TCP"},{"port":9090,"targetPort":"grpc","protocol":"TCP"}]}},
+  {"metadata":{"name":"lb","namespace":"shop"},"spec":{"type":"LoadBalancer","clusterIP":"10.96.2.18","selector":{"app":"api"},
+    "ports":[{"port":443,"targetPort":443,"nodePort":31443,"protocol":"TCP"}]}},
+  {"metadata":{"name":"headless","namespace":"shop"},"spec":{"clusterIP":"None","ports":[{"port":9100}]}}
+]

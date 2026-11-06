@@ -87,7 +87,7 @@ fn svc(
 fn port(port: u16, target_port: u16, node_port: Option<u16>) -> ServicePort {
     ServicePort {
         port,
-        target_port,
+        target_port: target_port.to_string().into(),
         node_port,
         protocol: t("TCP"),
     }
@@ -405,10 +405,10 @@ impl FakeLogs {
     /// The last `tail` lines the container has "already" logged.
     pub fn initial(&self, pod: &Pod, container: &str, tail: usize) -> Vec<String> {
         let lines: Vec<String> = match pod.status {
-            PodStatus::Pending => Vec::new(),
+            PodStatus::Pending | PodStatus::Failing => Vec::new(),
             PodStatus::CrashLoopBackOff | PodStatus::Failed => crash_lines(),
             PodStatus::Completed => migrate_lines(),
-            PodStatus::Running => (0..INITIAL_LINES)
+            PodStatus::Running | PodStatus::Terminating => (0..INITIAL_LINES)
                 .map(|s| running_line(container, s))
                 .collect(),
         };

@@ -18,7 +18,7 @@ pub(super) fn draw_logs(frame: &mut Frame, area: Rect, app: &mut App, theme: &Th
     let Some(pod) = app.selected_pod().cloned() else {
         return;
     };
-    if pod.status == PodStatus::Pending {
+    if !pod.has_started() {
         app.viewer_rows = usize::from(area.height);
         let lines = not_started(app, &pod, theme);
         let max_scroll = u16::try_from(lines.len().saturating_sub(1)).unwrap_or(u16::MAX);
@@ -165,7 +165,7 @@ fn summary(pod: &Pod, theme: &Theme) -> Vec<Line<'static>> {
         kv("Namespace", pod.namespace.to_string(), theme),
         kv(
             "Status",
-            format!("{} {}", pod.status.symbol(), pod.status.label()),
+            format!("{} {}", pod.status.symbol(), pod.status_label()),
             theme,
         ),
         kv("Ready", format!("{ready}/{total}"), theme),

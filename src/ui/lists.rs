@@ -58,9 +58,9 @@ impl CellText {
 fn pod_status_style(status: PodStatus, theme: &Theme) -> Style {
     match status {
         PodStatus::Running => theme.ok,
-        PodStatus::Pending => theme.warn,
+        PodStatus::Pending | PodStatus::Terminating => theme.warn,
         PodStatus::Completed => theme.muted,
-        PodStatus::Failed | PodStatus::CrashLoopBackOff => theme.err,
+        PodStatus::Failed | PodStatus::CrashLoopBackOff | PodStatus::Failing => theme.err,
     }
 }
 
@@ -129,7 +129,7 @@ fn rows(app: &App, kind: ResourceKind, mode: LayoutMode, theme: &Theme) -> Vec<V
                 };
                 vec![
                     CellText::with_symbol(p.status.symbol(), style, p.name.as_str()),
-                    CellText::new(p.status.label(), style),
+                    CellText::new(p.status_label(), style),
                     CellText::new(format!("{ready}/{total}"), Style::new()),
                     CellText::new(restarts.to_string(), rst_style),
                     CellText::new(format_age(p.age), theme.muted),

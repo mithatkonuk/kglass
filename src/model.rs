@@ -59,15 +59,19 @@ pub enum PodStatus {
     Completed,
     Failed,
     CrashLoopBackOff,
+    /// A container cannot start (ImagePullBackOff, CreateContainerConfigError, …).
+    Failing,
+    /// Deletion requested, containers still shutting down.
+    Terminating,
 }
 
 impl PodStatus {
     pub fn symbol(self) -> &'static str {
         match self {
             PodStatus::Running => "●",
-            PodStatus::Pending => "◌",
+            PodStatus::Pending | PodStatus::Terminating => "◌",
             PodStatus::Completed => "✓",
-            PodStatus::Failed | PodStatus::CrashLoopBackOff => "✕",
+            PodStatus::Failed | PodStatus::CrashLoopBackOff | PodStatus::Failing => "✕",
         }
     }
 
@@ -78,6 +82,8 @@ impl PodStatus {
             PodStatus::Completed => "Completed",
             PodStatus::Failed => "Failed",
             PodStatus::CrashLoopBackOff => "CrashLoopBackOff",
+            PodStatus::Failing => "Failing",
+            PodStatus::Terminating => "Terminating",
         }
     }
 }
@@ -119,6 +125,23 @@ impl Pod {
         (ready, total)
     }
 
+    /// Status text as kubectl shows it: a failing pod shows its container's reason.
+    pub fn status_label(&self) -> String {
+        if self.status == PodStatus::Failing {
+            let regular = self.containers.iter().filter(|c| !c.init);
+            let init = self.containers.iter().filter(|c| c.init);
+            if let Some(reason) = regular.chain(init).find_map(|c| c.waiting_reason.as_ref()) {
+                return reason.to_string();
+            }
+        }
+        self.status.label().to_string()
+    }
+
+    /// False while no container has run yet, so there are no logs to show.
+    pub fn has_started(&self) -> bool {
+        !matches!(self.status, PodStatus::Pending | PodStatus::Failing)
+    }
+
     pub fn restarts(&self) -> u32 {
         self.containers
             .iter()
@@ -150,7 +173,8 @@ impl ServiceType {
 #[derive(Clone, Debug, PartialEq)]
 pub struct ServicePort {
     pub port: u16,
-    pub target_port: u16,
+    /// Number or named container port.
+    pub target_port: SafeText,
     pub node_port: Option<u16>,
     pub protocol: SafeText,
 }
@@ -326,7 +350,9 @@ pub fn format_ports(ports: &[ServicePort]) -> String {
         .map(|p| {
             let head = match p.node_port {
                 Some(np) => format!("{}:{np}", p.port),
-                None if p.target_port != p.port => format!("{}→{}", p.port, p.target_port),
+                None if p.target_port.as_str() != p.port.to_string() => {
+                    format!("{}→{}", p.port, p.target_port)
+                }
                 None => p.port.to_string(),
             };
             format!("{head}/{}", p.protocol)
@@ -347,7 +373,7 @@ mod tests {
     fn port(port: u16, target_port: u16, node_port: Option<u16>) -> ServicePort {
         ServicePort {
             port,
-            target_port,
+            target_port: target_port.to_string().into(),
             node_port,
             protocol: "TCP".into(),
         }
@@ -374,6 +400,25 @@ mod tests {
             format_ports(&[port(80, 80, None), port(443, 443, None)]),
             "80/TCP,443/TCP"
         );
+    }
+
+    #[test]
+    fn named_target_port() {
+        let mut p = port(9090, 0, None);
+        p.target_port = "grpc".into();
+        assert_eq!(format_ports(&[p]), "9090→grpc/TCP");
+    }
+
+    #[test]
+    fn failing_pod_shows_container_reason() {
+        let mut pod = sample_snapshot().pods[0].clone();
+        pod.status = PodStatus::Failing;
+        pod.containers[1].waiting_reason = Some("ImagePullBackOff".into());
+        assert_eq!(pod.status_label(), "ImagePullBackOff");
+        assert!(!pod.has_started());
+        pod.status = PodStatus::Terminating;
+        assert_eq!(pod.status_label(), "Terminating");
+        assert!(pod.has_started());
     }
 
     #[test]

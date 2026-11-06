@@ -383,7 +383,7 @@ impl App {
         self.current_tab() == Some(ViewerTab::Logs)
             && self
                 .selected_pod()
-                .is_some_and(|p| p.status != crate::model::PodStatus::Pending)
+                .is_some_and(crate::model::Pod::has_started)
     }
 
     pub fn scroll_viewer(&mut self, delta: isize) {

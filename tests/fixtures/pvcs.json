@@ -1,0 +1,6 @@
+[
+  {"metadata":{"name":"data-api","namespace":"shop"},"spec":{"accessModes":["ReadWriteOnce"],"storageClassName":"longhorn","volumeName":"pvc-3e1a"},
+   "status":{"phase":"Bound","capacity":{"storage":"20Gi"}}},
+  {"metadata":{"name":"cache","namespace":"shop"},"spec":{"accessModes":["ReadWriteMany","ReadOnlyMany"],"resources":{"requests":{"storage":"5Gi"}}},
+   "status":{"phase":"Pending"}}
+]

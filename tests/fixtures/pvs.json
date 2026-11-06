@@ -1,0 +1,5 @@
+[
+  {"metadata":{"name":"pvc-3e1a"},"spec":{"capacity":{"storage":"20Gi"},"accessModes":["ReadWriteOncePod"],"storageClassName":"longhorn",
+    "claimRef":{"namespace":"shop","name":"data-api"}},"status":{"phase":"Bound"}},
+  {"metadata":{"name":"pvc-77b2"},"spec":{"capacity":{"storage":"50Gi"},"accessModes":["ReadWriteOnce"]},"status":{"phase":"Released"}}
+]
