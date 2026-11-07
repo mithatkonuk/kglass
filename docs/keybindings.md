@@ -8,7 +8,7 @@ Everything works with the keyboard alone. The mouse is optional.
 |---|---|
 | `↑` `↓` / `k` `j` | Move the cursor in the focused list, or scroll the viewer when it has focus |
 | `PgUp` / `PgDn` | Move or scroll by 10 rows |
-| `Enter` | Show the row under the cursor in the viewer |
+| `Enter` | Show the row under the cursor in the viewer right away (the viewer also follows the cursor by itself once it rests for a moment) |
 | `Tab` / `Shift+Tab` | Cycle focus: Pods → Images → Services → Storage → Viewer |
 | `1`–`4` | Jump to a list (in the narrow layout this also switches the visible list) |
 | `←` `→` | Previous / next viewer tab (wraps) |

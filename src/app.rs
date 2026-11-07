@@ -235,6 +235,8 @@ pub struct App {
     pub log_hint: Option<SafeText>,
     /// Index into `related()` while the viewer has focus.
     pub related_cursor: usize,
+    /// A list cursor moved at this tick: show its row once the cursor rests.
+    preview: Option<(ResourceKind, u64)>,
     /// Lists cut off at the item cap in the last refresh.
     truncated: [bool; 4],
     /// Showing a local container engine (`--oci`) rather than a cluster.
@@ -300,6 +302,7 @@ impl App {
             logs_previous: false,
             log_hint: None,
             related_cursor: 0,
+            preview: None,
             truncated: [false; 4],
             local_engine: false,
             all_namespaces: opts.all_namespaces,
@@ -650,6 +653,32 @@ impl App {
         let cursor = &mut self.cursors[kind.index()];
         cursor.set_len(len);
         cursor.select(0);
+        self.queue_preview(kind);
+    }
+
+    /// The viewer follows a moving list cursor, but only once it rests for a tick,
+    /// so holding an arrow key does not start a log stream for every row passed.
+    fn queue_preview(&mut self, kind: ResourceKind) {
+        self.preview = Some((kind, self.ticks));
+    }
+
+    fn apply_preview(&mut self) {
+        let Some((kind, moved_at)) = self.preview else {
+            return;
+        };
+        if self.ticks <= moved_at {
+            return;
+        }
+        self.preview = None;
+        if self.focus != Focus::List(kind) {
+            return;
+        }
+        let row = self.cursors[kind.index()]
+            .selected()
+            .and_then(|i| self.row_ref(kind, i));
+        if let Some(r) = row {
+            self.select(r);
+        }
     }
 
     /// Show another context/namespace for this session. Clears all data, stops
@@ -1074,6 +1103,7 @@ impl App {
 
     fn on_tick(&mut self) {
         self.ticks += 1;
+        self.apply_preview();
         if self.is_live() {
             if self.ticks.saturating_sub(self.last_refresh_tick) >= REFRESH_TICKS {
                 self.request_refresh();
@@ -1184,7 +1214,10 @@ impl App {
     /// Move the list cursor, the related-items cursor, or scroll the viewer.
     pub fn move_focused(&mut self, delta: isize) {
         match self.focus {
-            Focus::List(kind) => self.cursors[kind.index()].move_by(delta),
+            Focus::List(kind) => {
+                self.cursors[kind.index()].move_by(delta);
+                self.queue_preview(kind);
+            }
             Focus::Viewer if delta.abs() == 1 && !self.related().is_empty() => {
                 let last = self.related().len() - 1;
                 self.related_cursor = self.related_cursor.saturating_add_signed(delta).min(last);
@@ -1449,12 +1482,55 @@ mod tests {
     }
 
     #[test]
-    fn cursor_moves_but_selection_waits_for_enter() {
+    fn enter_selects_immediately() {
         let mut a = app();
         a.update(key(KeyCode::Down));
-        assert_eq!(a.selected, pod("api-7c9d8f-x2k4"));
         a.update(key(KeyCode::Enter));
         assert_eq!(a.selected, pod("api-7c9d8f-q8n1"));
+    }
+
+    #[test]
+    fn viewer_follows_the_cursor_once_it_rests() {
+        let mut a = app();
+        a.update(key(KeyCode::Down));
+        assert_eq!(a.selected, pod("api-7c9d8f-x2k4"), "not on every keypress");
+        a.update(AppEvent::Tick);
+        assert_eq!(a.selected, pod("api-7c9d8f-q8n1"), "after the cursor rests");
+        assert_eq!(
+            a.focus,
+            Focus::List(ResourceKind::Pods),
+            "focus stays in the list"
+        );
+    }
+
+    #[test]
+    fn holding_an_arrow_key_only_opens_the_last_row() {
+        let mut a = app();
+        for _ in 0..3 {
+            a.update(key(KeyCode::Down));
+        }
+        a.update(AppEvent::Tick);
+        assert_eq!(a.selected, pod("billing-0"));
+    }
+
+    #[test]
+    fn wheel_and_filter_also_preview() {
+        let mut a = app();
+        a.update(key(KeyCode::Char('/')));
+        for c in "ledger".chars() {
+            a.update(key(KeyCode::Char(c)));
+        }
+        a.update(AppEvent::Tick);
+        assert_eq!(a.selected, pod("ledger-sync-5f7d-h2c"));
+    }
+
+    #[test]
+    fn preview_is_dropped_when_focus_leaves_the_list() {
+        let mut a = app();
+        a.update(key(KeyCode::Down));
+        a.update(key(KeyCode::Tab));
+        a.update(AppEvent::Tick);
+        assert_eq!(a.selected, pod("api-7c9d8f-x2k4"));
     }
 
     #[test]
