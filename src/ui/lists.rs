@@ -59,7 +59,7 @@ impl CellText {
 fn pod_status_style(status: PodStatus, theme: &Theme) -> Style {
     match status {
         PodStatus::Running => theme.ok,
-        PodStatus::Pending | PodStatus::Terminating => theme.warn,
+        PodStatus::Pending | PodStatus::Terminating | PodStatus::Restarting => theme.warn,
         PodStatus::Completed => theme.muted,
         PodStatus::Failed | PodStatus::CrashLoopBackOff | PodStatus::Failing => theme.err,
     }

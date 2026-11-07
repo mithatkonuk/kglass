@@ -63,6 +63,8 @@ pub enum PodStatus {
     Failing,
     /// Deletion requested, containers still shutting down.
     Terminating,
+    /// A local container the engine keeps restarting.
+    Restarting,
 }
 
 impl PodStatus {
@@ -70,6 +72,7 @@ impl PodStatus {
         match self {
             PodStatus::Running => "●",
             PodStatus::Pending | PodStatus::Terminating => "◌",
+            PodStatus::Restarting => "↻",
             PodStatus::Completed => "✓",
             PodStatus::Failed | PodStatus::CrashLoopBackOff | PodStatus::Failing => "✕",
         }
@@ -84,6 +87,7 @@ impl PodStatus {
             PodStatus::CrashLoopBackOff => "CrashLoopBackOff",
             PodStatus::Failing => "Failing",
             PodStatus::Terminating => "Terminating",
+            PodStatus::Restarting => "Restarting",
         }
     }
 }
@@ -157,6 +161,8 @@ pub enum ServiceType {
     NodePort,
     LoadBalancer,
     ExternalName,
+    /// Ports a local container publishes on the host.
+    Published,
 }
 
 impl ServiceType {
@@ -166,6 +172,7 @@ impl ServiceType {
             ServiceType::NodePort => "NodePort",
             ServiceType::LoadBalancer => "LoadBalancer",
             ServiceType::ExternalName => "ExternalName",
+            ServiceType::Published => "Published",
         }
     }
 }
@@ -194,13 +201,21 @@ pub struct Service {
 pub enum StorageKind {
     Pvc,
     Pv,
+    /// A local container engine volume; shown and navigated like a claim.
+    Volume,
 }
 
 impl StorageKind {
+    /// Claims and local volumes: listed first, keyed as `ResourceRef::Pvc`, mounted by pods.
+    pub fn is_claim(self) -> bool {
+        matches!(self, StorageKind::Pvc | StorageKind::Volume)
+    }
+
     pub fn label(self) -> &'static str {
         match self {
             StorageKind::Pvc => "PVC",
             StorageKind::Pv => "PV",
+            StorageKind::Volume => "VOL",
         }
     }
 }
@@ -429,6 +444,22 @@ mod tests {
         pod.status = PodStatus::Terminating;
         assert_eq!(pod.status_label(), "Terminating");
         assert!(pod.has_started());
+    }
+
+    #[test]
+    fn local_container_kinds() {
+        assert_eq!(
+            (
+                PodStatus::Restarting.symbol(),
+                PodStatus::Restarting.label()
+            ),
+            ("↻", "Restarting")
+        );
+        let mut pod = sample_snapshot().pods[0].clone();
+        pod.status = PodStatus::Restarting;
+        assert!(pod.has_started(), "a restarting container has logs");
+        assert_eq!(StorageKind::Volume.label(), "VOL");
+        assert_eq!(ServiceType::Published.label(), "Published");
     }
 
     #[test]

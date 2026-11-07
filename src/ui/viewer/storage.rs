@@ -8,6 +8,7 @@ use crate::model::{ResourceRef, StorageItem, StorageKind};
 use crate::ui::theme::Theme;
 
 const METADATA_ONLY: &str = "Kubernetes metadata only — storage contents are not inspected.";
+const LOCAL_METADATA_ONLY: &str = "Engine metadata only — volume contents are not inspected.";
 
 fn selected_item(app: &App) -> Option<&StorageItem> {
     let (kind, name) = match &app.selected {
@@ -15,10 +16,14 @@ fn selected_item(app: &App) -> Option<&StorageItem> {
         Some(ResourceRef::Pv(n)) => (StorageKind::Pv, n),
         _ => return None,
     };
-    app.snapshot
-        .storage
-        .iter()
-        .find(|s| s.kind == kind && &s.name == name)
+    app.snapshot.storage.iter().find(|s| {
+        let same = if kind == StorageKind::Pvc {
+            s.kind.is_claim()
+        } else {
+            s.kind == kind
+        };
+        same && &s.name == name
+    })
 }
 
 fn dash(v: Option<&impl ToString>) -> String {
@@ -35,7 +40,9 @@ pub(super) fn lines(app: &App, tab: ViewerTab, theme: &Theme) -> Vec<Line<'stati
             lines.extend(jump_section(app, theme));
             lines
         }
-        (StorageKind::Pvc, ViewerTab::MountedBy) => mounted_by(item, related_cursor(app), theme),
+        (StorageKind::Pvc | StorageKind::Volume, ViewerTab::MountedBy) => {
+            mounted_by(item, related_cursor(app), theme)
+        }
         (StorageKind::Pv, ViewerTab::Claim) => {
             let mut lines = vec![
                 section("Claim", theme),
@@ -54,7 +61,12 @@ pub(super) fn lines(app: &App, tab: ViewerTab, theme: &Theme) -> Vec<Line<'stati
         _ => Vec::new(),
     };
     lines.push(Line::default());
-    lines.push(note(METADATA_ONLY, theme));
+    let metadata_note = if item.kind == StorageKind::Volume {
+        LOCAL_METADATA_ONLY
+    } else {
+        METADATA_ONLY
+    };
+    lines.push(note(metadata_note, theme));
     lines
 }
 
@@ -62,6 +74,7 @@ fn details(item: &StorageItem, theme: &Theme) -> Vec<Line<'static>> {
     let (title, bound_label) = match item.kind {
         StorageKind::Pvc => ("PersistentVolumeClaim", "Volume"),
         StorageKind::Pv => ("PersistentVolume", "Claim"),
+        StorageKind::Volume => ("Volume (local engine)", "Bound to"),
     };
     let mut lines = vec![
         section(title, theme),

@@ -726,7 +726,7 @@ impl App {
                 .snapshot
                 .storage
                 .iter()
-                .any(|s| s.kind == StorageKind::Pvc && &s.name == name),
+                .any(|s| s.kind.is_claim() && &s.name == name),
             ResourceRef::Pv(_) => self
                 .snapshot
                 .storage
@@ -809,7 +809,9 @@ impl App {
     /// Storage rows in display order: claims first, then volumes.
     pub fn storage_rows(&self) -> impl Iterator<Item = &StorageItem> {
         let of = |k| self.snapshot.storage.iter().filter(move |s| s.kind == k);
-        of(StorageKind::Pvc).chain(of(StorageKind::Pv))
+        of(StorageKind::Pvc)
+            .chain(of(StorageKind::Volume))
+            .chain(of(StorageKind::Pv))
     }
 
     /// Names in display order, used for filtering.
@@ -869,7 +871,7 @@ impl App {
             ResourceKind::Storage => self
                 .storage_rows()
                 .map(|s| match s.kind {
-                    StorageKind::Pvc => ResourceRef::Pvc(s.name.clone()),
+                    StorageKind::Pvc | StorageKind::Volume => ResourceRef::Pvc(s.name.clone()),
                     StorageKind::Pv => ResourceRef::Pv(s.name.clone()),
                 })
                 .collect(),
@@ -1217,7 +1219,7 @@ impl App {
                 });
                 let claims = self
                     .storage_rows()
-                    .filter(|s| s.kind == StorageKind::Pvc && s.mounted_by.contains(name));
+                    .filter(|s| s.kind.is_claim() && s.mounted_by.contains(name));
                 services
                     .map(|s| ResourceRef::Service(s.name.clone()))
                     .chain(claims.map(|c| ResourceRef::Pvc(c.name.clone())))
@@ -1227,11 +1229,19 @@ impl App {
         }
     }
 
+    /// A storage item by name; `StorageKind::Pvc` also finds local volumes.
     fn storage_item(&self, kind: StorageKind, name: &SafeText) -> Option<&StorageItem> {
+        let same_kind = |s: &StorageItem| {
+            if kind == StorageKind::Pvc {
+                s.kind.is_claim()
+            } else {
+                s.kind == kind
+            }
+        };
         self.snapshot
             .storage
             .iter()
-            .find(|s| s.kind == kind && &s.name == name)
+            .find(|s| same_kind(s) && &s.name == name)
     }
 
     /// Show `target` in the viewer and move the matching list's cursor to it,
@@ -1799,6 +1809,31 @@ mod tests {
         assert!(a.related().is_empty());
         a.update(key(KeyCode::Up));
         assert!(!a.logs.follow(), "logs scrolled");
+    }
+
+    #[test]
+    fn local_volumes_list_like_claims() {
+        let mut snap = sample_snapshot();
+        snap.storage.push(StorageItem {
+            kind: StorageKind::Volume,
+            name: "app-data".into(),
+            status: "In use".into(),
+            capacity: "—".into(),
+            access_modes: "RW".into(),
+            storage_class: "local".into(),
+            bound_to: None,
+            mounted_by: vec!["api-7c9d8f-x2k4".into()],
+        });
+        let mut a = App::new(snap, AppOptions::default());
+        assert_eq!(a.row_count(ResourceKind::Storage), 6);
+        assert_eq!(
+            a.row_ref(ResourceKind::Storage, 3),
+            Some(ResourceRef::Pvc("app-data".into()))
+        );
+        open(&mut a, '4', 3);
+        a.update(key(KeyCode::Right));
+        assert_eq!(a.current_tab(), Some(ViewerTab::MountedBy));
+        assert_eq!(a.related(), [ResourceRef::Pod("api-7c9d8f-x2k4".into())]);
     }
 
     #[test]

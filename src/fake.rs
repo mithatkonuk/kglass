@@ -408,7 +408,8 @@ impl FakeLogs {
             PodStatus::Pending | PodStatus::Failing => Vec::new(),
             PodStatus::CrashLoopBackOff | PodStatus::Failed => crash_lines(),
             PodStatus::Completed => migrate_lines(),
-            PodStatus::Running | PodStatus::Terminating => (0..INITIAL_LINES)
+            PodStatus::Running | PodStatus::Terminating | PodStatus::Restarting => (0
+                ..INITIAL_LINES)
                 .map(|s| running_line(container, s))
                 .collect(),
         };
