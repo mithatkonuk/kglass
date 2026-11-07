@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/brand/logo.png" width="128" alt="Kubeglass logo: a magnifying glass over a cluster wheel, showing pod status rows"></p>
+
 # Kubeglass (`kglass`)
 
 A fast, **read-only** terminal viewer for Kubernetes clusters. Pick a pod, image, service or volume from the lists on the left, and the large viewer on the right shows its logs, details and related resources.

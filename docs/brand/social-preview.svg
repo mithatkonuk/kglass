@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640">
+<defs><linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+  <stop offset="0" stop-color="#0d1117"/><stop offset="1" stop-color="#161b22"/></linearGradient></defs>
+<rect width="1280" height="640" fill="url(#bg)"/>
+<rect x="0" y="0" width="1280" height="6" fill="#3fb950"/>
+
+  <polygon points="240.0,104.0 385.4,174.0 421.3,331.4 320.7,457.6 159.3,457.6 58.7,331.4 94.6,174.0" fill="none" stroke="#2f81f7" stroke-width="15.0" stroke-linejoin="round"/>
+  <line x1="240.0" y1="290.0" x2="240.0" y2="144.9" stroke="#2f81f7" stroke-width="10.5" stroke-linecap="round" opacity="0.55"/><line x1="240.0" y1="290.0" x2="353.4" y2="199.5" stroke="#2f81f7" stroke-width="10.5" stroke-linecap="round" opacity="0.55"/><line x1="240.0" y1="290.0" x2="381.4" y2="322.3" stroke="#2f81f7" stroke-width="10.5" stroke-linecap="round" opacity="0.55"/><line x1="240.0" y1="290.0" x2="302.9" y2="420.7" stroke="#2f81f7" stroke-width="10.5" stroke-linecap="round" opacity="0.55"/><line x1="240.0" y1="290.0" x2="177.1" y2="420.7" stroke="#2f81f7" stroke-width="10.5" stroke-linecap="round" opacity="0.55"/><line x1="240.0" y1="290.0" x2="98.6" y2="322.3" stroke="#2f81f7" stroke-width="10.5" stroke-linecap="round" opacity="0.55"/><line x1="240.0" y1="290.0" x2="126.6" y2="199.5" stroke="#2f81f7" stroke-width="10.5" stroke-linecap="round" opacity="0.55"/>
+  <circle cx="240.0" cy="290.0" r="27.0" fill="#2f81f7"/>
+  <line x1="384.4" y1="425.4" x2="492.4" y2="533.4" stroke="#3fb950" stroke-width="36.0" stroke-linecap="round"/>
+  <circle cx="285.0" cy="326.0" r="138.0" fill="#0d1117" fill-opacity="1" stroke="#3fb950" stroke-width="22.5"/>
+  <clipPath id="lens270"><circle cx="285.0" cy="326.0" r="126.0"/></clipPath>
+  <g clip-path="url(#lens270)"><text x="195.0" y="282.5" fill="#3fb950" font-family="Menlo, monospace" font-size="45.0" font-weight="bold">●</text><rect x="246.0" y="259.4" width="102.0" height="15.0" rx="7.5" fill="#c9d1d9" opacity="0.85"/><text x="195.0" y="342.5" fill="#f85149" font-family="Menlo, monospace" font-size="45.0" font-weight="bold">✕</text><rect x="246.0" y="319.4" width="78.0" height="15.0" rx="7.5" fill="#c9d1d9" opacity="0.85"/><text x="195.0" y="402.5" fill="#d29922" font-family="Menlo, monospace" font-size="45.0" font-weight="bold">◌</text><rect x="246.0" y="379.4" width="102.0" height="15.0" rx="7.5" fill="#c9d1d9" opacity="0.85"/></g>
+
+<text x="560" y="210" fill="#e6edf3" font-family="Menlo, monospace" font-size="92" font-weight="bold">Kubeglass</text>
+<text x="563" y="265" fill="#3fb950" font-family="Menlo, monospace" font-size="34">$ kglass</text>
+<text x="563" y="330" fill="#8b949e" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="34">A fast, read-only terminal viewer</text>
+<text x="563" y="374" fill="#8b949e" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="34">for Kubernetes clusters.</text>
+<rect x="560" y="400" width="198" height="42" rx="21" fill="#21262d" stroke="#30363d"/><text x="578" y="427" fill="#c9d1d9" font-family="Menlo, monospace" font-size="20">live pod logs</text><rect x="772.5" y="400" width="274" height="42" rx="21" fill="#21262d" stroke="#30363d"/><text x="790.5" y="427" fill="#c9d1d9" font-family="Menlo, monospace" font-size="20">JSON log formatting</text><rect x="560" y="458" width="161" height="42" rx="21" fill="#21262d" stroke="#30363d"/><text x="578" y="485" fill="#c9d1d9" font-family="Menlo, monospace" font-size="20">log search</text><rect x="735.0" y="458" width="324" height="42" rx="21" fill="#21262d" stroke="#30363d"/><text x="753.0" y="485" fill="#c9d1d9" font-family="Menlo, monospace" font-size="20">previous-container logs</text><rect x="560" y="516" width="224" height="42" rx="21" fill="#21262d" stroke="#30363d"/><text x="578" y="543" fill="#c9d1d9" font-family="Menlo, monospace" font-size="20">jump to related</text><rect x="797.5" y="516" width="248" height="42" rx="21" fill="#21262d" stroke="#30363d"/><text x="815.5" y="543" fill="#c9d1d9" font-family="Menlo, monospace" font-size="20">-A all namespaces</text>
+<text x="563" y="600" fill="#6e7681" font-family="Menlo, monospace" font-size="22">Rust · ratatui · works with your kubeconfig</text>
+<rect x="1080" y="40" width="160" height="44" rx="6" fill="none" stroke="#39c5cf" stroke-width="2"/>
+<text x="1097" y="70" fill="#39c5cf" font-family="Menlo, monospace" font-size="20">READ-ONLY</text>
+</svg>
