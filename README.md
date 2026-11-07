@@ -25,6 +25,7 @@ A fast, **read-only** terminal viewer for Kubernetes clusters. Pick a pod, image
   - `/` in the log viewer shows only the matching lines.
   - `p` shows the previous container instance's logs, for crash loops.
 - **Jump between related resources.** From a service to its pods, a claim to its volume or the pods mounting it, a pod to its services and claims, an image to the pods using it: `↑↓` then `Enter` in the viewer.
+- **Local containers too.** `kglass --oci` shows the containers of your local engine in the same screen: logs, search, JSON formatting, inspect and jump-to-related all work. It uses the `docker` CLI by default; `--oci podman` or `--oci nerdctl` use those instead.
 - **Switch without leaving the app.** `x` picks a context and `n` picks a namespace. The switch lasts for the session only; kglass never writes to your kubeconfig. `/` filters a list by name.
 - **Honest about problems.** Each pane shows its own state: loading, `Forbidden (403)` with the exact permission needed, timeouts, or stale data after a failed refresh. One failure never blanks the rest. Expired credentials show `● Disconnected` in the header.
 - **Strictly read-only.** kglass only ever lists, gets and follows logs. It never reads Secrets and never shows credentials.
@@ -48,6 +49,9 @@ kglass                        # current context and namespace, like kubectl
 kglass -n payments            # another namespace
 kglass --context dev-west     # another context
 kglass --demo                 # built-in sample data, no cluster needed
+kglass --oci                  # local containers via the `docker` CLI
+kglass --oci podman           # …or via podman (or nerdctl)
+kglass --oci -n my_app        # only one compose project
 ```
 
 ```bash
@@ -55,6 +59,10 @@ kglass -A                     # every namespace; rows are shown as namespace/nam
 ```
 
 On large clusters `-A` lists everything every 10s, and one refresh can take several seconds, so prefer a single namespace when you can.
+
+### Local containers (`--oci`)
+
+kglass runs only read-only commands of the CLI you name: `ps`, `container inspect`, `volume ls`/`inspect`, `logs` and `version`. It never runs a shell, and names are always passed after `--`. The four panes become **Containers, Images, Ports** (published host ports) and **Volumes**. `n` picks a compose project. The YAML tab shows `inspect` output with bind-mount host paths, the create command and volume options removed. Environment variables are shown as-is, like `kubectl` shows them. Previous-container logs (`p`) are a Kubernetes feature and are not available here.
 
 ### Permissions
 

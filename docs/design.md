@@ -265,4 +265,15 @@ Testing follows plan §12: unit tests for row formatting, image dedup, relations
   - watch the first CI run
   - tag v0.2.0
   - try kglass in iTerm2, Terminal.app and a Linux terminal
+- 2026-11-07: **Local containers: `kglass --oci [COMMAND]`** (plan [`plan-oci.md`](plan-oci.md)).
+  - **What it does:** runs the Docker-compatible CLI (`docker` by default, also `podman` and `nerdctl`). It is read-only, uses no shell, and passes names after `--`.
+  - **Mapping:** Containers / Images / Ports / Volumes, with compose projects acting as namespaces.
+  - **Owner's decisions:** engine-neutral, and simply using the CLI rather than the engine's socket API.
+  - **My calls:**
+    - Exits 130/137/143 (`docker stop`) count as Completed.
+    - Unused anonymous volumes are hidden.
+    - The YAML tab redacts bind-mount host paths, `CreateCommand` and volume options. Env vars are shown as-is, consistent with Q5.
+    - `p` (previous logs) and `x` (contexts) do not apply locally.
+  - **Verified:** 279 tests pass. Checked on Docker Desktop 29.9.2 with a throwaway container (logs, ports, volume, YAML, picker), then cleaned up.
+  - **Not verified live:** Podman, whose machine was not running. It is covered by fixtures and its CLI compatibility.
 - **Release 2** (write actions) needs its own safety design before any code.

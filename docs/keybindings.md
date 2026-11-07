@@ -20,7 +20,7 @@ Everything works with the keyboard alone. The mouse is optional.
 | `J` | Logs: show raw JSON instead of formatted lines |
 | `↑` `↓` then `Enter` | Viewer focused, with related resources shown: choose one and jump to it |
 | `x` | Switch context (from kubeconfig; type to filter, `Enter` switches) |
-| `n` | Switch namespace (type a name if listing namespaces is not allowed) |
+| `n` | Switch namespace (type a name if listing namespaces is not allowed). With `--oci`: pick a compose project, or `(all projects)` |
 | `r` | Refresh now (lists refresh every 10s anyway) |
 | `?` | Toggle help |
 | `Esc` | Close help, or leave zoom |
