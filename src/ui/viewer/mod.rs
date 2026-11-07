@@ -138,9 +138,9 @@ fn title(area: Rect, app: &App, theme: &Theme) -> Line<'static> {
         .map(|t| t.title().width() + TAB_SEPARATOR.len())
         .sum();
     // Corners (2), a gap after the tabs (2), the kind label and its space.
-    let room = usize::from(area.width).saturating_sub(tabs_width + r.kind_label().len() + 5);
+    let room = usize::from(area.width).saturating_sub(tabs_width + app.ref_label(r).len() + 5);
     Line::from(vec![
-        Span::styled(format!("{} ", r.kind_label()), theme.muted),
+        Span::styled(format!("{} ", app.ref_label(r)), theme.muted),
         Span::styled(truncate(r.name().as_str(), room.max(8)), theme.title),
     ])
 }
@@ -193,6 +193,17 @@ fn yaml_lines(app: &App, r: &ResourceRef, theme: &Theme) -> Vec<Line<'static>> {
 /// What to do when the cluster cannot be used. Credentials are never shown.
 fn auth_help(app: &App, error: &SafeText, theme: &Theme) -> Vec<Line<'static>> {
     let ctx = &app.snapshot.context;
+    if app.is_local_engine() {
+        return vec![
+            Line::styled("✕ Cannot reach the local container engine", theme.err),
+            Line::raw(format!("  {error}")),
+            Line::default(),
+            Line::raw(
+                "Start your container engine (for example Docker Desktop, or `podman machine start`), then press r.",
+            ),
+            Line::raw("Press q to quit."),
+        ];
+    }
     let unauthorized = error.as_str().starts_with("Unauthorized");
     let headline = if unauthorized {
         format!("✕ Cannot authenticate to context {ctx}")
@@ -247,7 +258,7 @@ pub(crate) fn jump_section(app: &App, theme: &Theme) -> Vec<Line<'static>> {
     for (i, r) in related.iter().enumerate() {
         let line = Line::from(vec![
             Span::styled("  → ", theme.key),
-            Span::raw(format!("{} {}  ", r.kind_label(), r.name())),
+            Span::raw(format!("{} {}  ", app.ref_label(r), r.name())),
             derived_tag(theme),
         ]);
         lines.push(mark(line, i, cursor, theme));

@@ -4,6 +4,7 @@
 use std::time::Duration;
 
 use futures::StreamExt;
+use futures::stream::BoxStream;
 use kube::Client;
 use ratatui::DefaultTerminal;
 use ratatui::crossterm::event::{self, Event};
@@ -16,6 +17,7 @@ use crate::cluster::config::{Kubeconfig, Target, client_for};
 use crate::cluster::convert::Timestamp;
 use crate::cluster::fetch::{self, FetchError, Scope};
 use crate::command::Command;
+use crate::oci::Engine;
 use crate::text::SafeText;
 use crate::ui;
 
@@ -46,6 +48,8 @@ pub struct Executor {
     kubeconfig: Option<Kubeconfig>,
     /// Why the last target switch produced no client; reported on refresh.
     switch_error: Option<FetchError>,
+    /// Local container engine (`--oci`); when set, every command goes to it.
+    oci: Option<Engine>,
 }
 
 impl Executor {
@@ -57,7 +61,13 @@ impl Executor {
             log_task: None,
             kubeconfig: None,
             switch_error: None,
+            oci: None,
         }
+    }
+
+    pub fn with_oci(mut self, engine: Engine) -> Self {
+        self.oci = Some(engine);
+        self
     }
 
     pub fn with_kubeconfig(mut self, kubeconfig: Kubeconfig) -> Self {
@@ -66,6 +76,10 @@ impl Executor {
     }
 
     pub async fn run(&mut self, command: Command) {
+        if let Some(engine) = self.oci.clone() {
+            self.run_oci(engine, command);
+            return;
+        }
         if let Command::SwitchTarget { context, namespace } = command {
             self.switch_target(context.to_string(), namespace.to_string())
                 .await;
@@ -115,36 +129,11 @@ impl Executor {
             } => {
                 self.stop_logs();
                 let tail = i64::try_from(LOG_TAIL).unwrap_or(i64::MAX);
-                self.log_task = Some(tokio::spawn(async move {
-                    let lines = {
-                        let (ns, pod) = scope.split(pod.as_str());
-                        fetch::log_lines(client, ns, pod, container.to_string(), tail, previous)
-                    };
-                    futures::pin_mut!(lines);
-                    while let Some(item) = lines.next().await {
-                        let event = match item {
-                            Ok(line) => DataEvent::LogLine { session, line },
-                            Err(e) => {
-                                let _ = tx
-                                    .send(DataEvent::LogEnded {
-                                        session,
-                                        error: Some(e),
-                                    })
-                                    .await;
-                                return;
-                            }
-                        };
-                        if tx.send(event).await.is_err() {
-                            return;
-                        }
-                    }
-                    let _ = tx
-                        .send(DataEvent::LogEnded {
-                            session,
-                            error: None,
-                        })
-                        .await;
-                }));
+                let (ns, pod) = scope.split(pod.as_str());
+                let lines =
+                    fetch::log_lines(client, ns, pod, container.to_string(), tail, previous)
+                        .boxed();
+                self.log_task = Some(tokio::spawn(forward_logs(lines, session, tx)));
             }
             Command::StopLogs => self.stop_logs(),
             Command::FetchYaml { generation, target } => {
@@ -220,6 +209,82 @@ impl Executor {
         }
     }
 
+    /// Commands against a local container engine. Same events as for a cluster.
+    fn run_oci(&mut self, engine: Engine, command: Command) {
+        let tx = self.tx.clone();
+        let scope = self.scope.clone();
+        match command {
+            Command::Refresh { generation } => {
+                let version_engine = engine.clone();
+                let version_tx = tx.clone();
+                tokio::spawn(async move {
+                    let lists =
+                        guarded_lists(
+                            async move { engine.fetch_lists(&scope, Timestamp::now()).await },
+                        )
+                        .await;
+                    let _ = tx
+                        .send(DataEvent::Lists {
+                            generation,
+                            lists: Box::new(lists),
+                        })
+                        .await;
+                });
+                tokio::spawn(async move {
+                    let result = version_engine.version().await;
+                    let _ = version_tx
+                        .send(DataEvent::Version { generation, result })
+                        .await;
+                });
+            }
+            Command::StartLogs {
+                session,
+                pod,
+                previous,
+                ..
+            } => {
+                self.stop_logs();
+                if previous {
+                    let error = FetchError::Unreachable(SafeText::from(
+                        "previous logs are not available for local containers",
+                    ));
+                    let _ = tx.try_send(DataEvent::LogEnded {
+                        session,
+                        error: Some(error),
+                    });
+                    return;
+                }
+                let tail = i64::try_from(LOG_TAIL).unwrap_or(i64::MAX);
+                let lines = engine.log_lines(pod.as_str(), tail);
+                self.log_task = Some(tokio::spawn(forward_logs(lines, session, tx)));
+            }
+            Command::StopLogs => self.stop_logs(),
+            Command::FetchYaml { generation, target } => {
+                tokio::spawn(async move {
+                    let result = engine.inspect_yaml(&target).await;
+                    let _ = tx
+                        .send(DataEvent::Yaml {
+                            generation,
+                            target,
+                            result,
+                        })
+                        .await;
+                });
+            }
+            Command::FetchNamespaces { generation } => {
+                tokio::spawn(async move {
+                    let result = engine.projects().await;
+                    let _ = tx.send(DataEvent::Namespaces { generation, result }).await;
+                });
+            }
+            // For a local engine the "namespace" is a compose project filter.
+            Command::SwitchTarget { namespace, .. } => {
+                self.stop_logs();
+                self.scope = Scope::Namespace(namespace.to_string());
+            }
+        }
+    }
+
     fn stop_logs(&mut self) {
         if let Some(task) = self.log_task.take() {
             task.abort();
@@ -231,6 +296,37 @@ impl Drop for Executor {
     fn drop(&mut self) {
         self.stop_logs();
     }
+}
+
+/// Send log lines for `session` until the stream ends, then report why it ended.
+async fn forward_logs(
+    mut lines: BoxStream<'static, Result<SafeText, FetchError>>,
+    session: u64,
+    tx: mpsc::Sender<DataEvent>,
+) {
+    while let Some(item) = lines.next().await {
+        let event = match item {
+            Ok(line) => DataEvent::LogLine { session, line },
+            Err(e) => {
+                let _ = tx
+                    .send(DataEvent::LogEnded {
+                        session,
+                        error: Some(e),
+                    })
+                    .await;
+                return;
+            }
+        };
+        if tx.send(event).await.is_err() {
+            return;
+        }
+    }
+    let _ = tx
+        .send(DataEvent::LogEnded {
+            session,
+            error: None,
+        })
+        .await;
 }
 
 /// Every list failing with the same error.
@@ -302,11 +398,15 @@ pub async fn run(
     client: Option<Client>,
     scope: Scope,
     kubeconfig: Option<Kubeconfig>,
+    oci: Option<Engine>,
 ) -> color_eyre::Result<()> {
     let (data_tx, mut data_rx) = mpsc::channel(DATA_CHANNEL);
     let mut executor = Executor::new(client, scope, data_tx);
     if let Some(kc) = kubeconfig {
         executor = executor.with_kubeconfig(kc);
+    }
+    if let Some(engine) = oci {
+        executor = executor.with_oci(engine);
     }
 
     let (input_tx, mut input_rx) = mpsc::unbounded_channel();
@@ -620,6 +720,106 @@ mod tests {
             exec.interactive_mode,
             Some(kube::config::ExecInteractiveMode::Never)
         );
+    }
+
+    fn oci_executor() -> (
+        Executor,
+        mpsc::Receiver<DataEvent>,
+        std::sync::Arc<crate::oci::testing::Fake>,
+    ) {
+        let fake = std::sync::Arc::new(crate::oci::testing::Fake {
+            server_version: "29.9.2",
+            ..Default::default()
+        });
+        let (tx, rx) = mpsc::channel(64);
+        let engine = crate::oci::Engine::with_runner("docker", fake.clone());
+        (
+            Executor::new(None, Scope::All, tx).with_oci(engine),
+            rx,
+            fake,
+        )
+    }
+
+    #[tokio::test]
+    async fn oci_refresh_sends_containers_and_engine_version() {
+        let (mut ex, mut rx, _) = oci_executor();
+        ex.run(Command::Refresh { generation: 1 }).await;
+        let mut seen = (false, false);
+        for _ in 0..2 {
+            match next(&mut rx).await {
+                DataEvent::Lists {
+                    generation: 1,
+                    lists,
+                } => seen.0 = lists.pods.unwrap().len() == 6,
+                DataEvent::Version {
+                    generation: 1,
+                    result,
+                } => {
+                    seen.1 = result.unwrap().as_str() == "docker 29.9.2";
+                }
+                other => panic!("unexpected {other:?}"),
+            }
+        }
+        assert_eq!(seen, (true, true));
+    }
+
+    #[tokio::test]
+    async fn oci_logs_yaml_projects_and_project_switch() {
+        let (mut ex, mut rx, fake) = oci_executor();
+        ex.run(Command::StartLogs {
+            session: 2,
+            pod: "shop-web-1".into(),
+            container: "web".into(),
+            previous: false,
+        })
+        .await;
+        assert!(matches!(
+            next(&mut rx).await,
+            DataEvent::LogLine { session: 2, .. }
+        ));
+        ex.run(Command::FetchYaml {
+            generation: 0,
+            target: ResourceRef::Pod("shop-web-1".into()),
+        })
+        .await;
+        ex.run(Command::FetchNamespaces { generation: 0 }).await;
+        ex.run(Command::SwitchTarget {
+            context: "oci: docker".into(),
+            namespace: "shop".into(),
+        })
+        .await;
+        assert_eq!(ex.scope, Scope::Namespace("shop".into()));
+        assert!(ex.oci.is_some(), "a project switch keeps the local engine");
+        let calls = fake.calls.lock().unwrap();
+        assert!(
+            calls
+                .iter()
+                .any(|c| c[..2] == ["logs", "--follow"] && c.last().unwrap() == "shop-web-1")
+        );
+    }
+
+    #[tokio::test]
+    async fn oci_previous_logs_are_not_available() {
+        let (mut ex, mut rx, _) = oci_executor();
+        ex.run(Command::StartLogs {
+            session: 3,
+            pod: "flaky".into(),
+            container: "flaky".into(),
+            previous: true,
+        })
+        .await;
+        match next(&mut rx).await {
+            DataEvent::LogEnded {
+                session: 3,
+                error: Some(e),
+            } => {
+                assert!(
+                    e.to_string().contains("not available for local containers"),
+                    "{e}"
+                );
+            }
+            other => panic!("unexpected {other:?}"),
+        }
     }
 
     #[tokio::test]

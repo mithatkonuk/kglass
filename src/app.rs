@@ -235,6 +235,8 @@ pub struct App {
     pub related_cursor: usize,
     /// Lists cut off at the item cap in the last refresh.
     truncated: [bool; 4],
+    /// Showing a local container engine (`--oci`) rather than a cluster.
+    local_engine: bool,
     pub hits: HitMap,
     pub size: (u16, u16),
     pub connection: Connection,
@@ -296,6 +298,7 @@ impl App {
             log_hint: None,
             related_cursor: 0,
             truncated: [false; 4],
+            local_engine: false,
             all_namespaces: opts.all_namespaces,
             hits: HitMap::default(),
             size: (0, 0),
@@ -390,6 +393,35 @@ impl App {
     /// True when the pane shows rows from an earlier refresh because the last one failed.
     pub fn is_stale(&self, kind: ResourceKind) -> bool {
         matches!(self.panes[kind.index()], PaneStatus::Failed(_)) && self.row_count(kind) > 0
+    }
+
+    /// Show a local container engine: panes and labels use container terms.
+    pub fn set_local_engine(&mut self) {
+        self.local_engine = true;
+    }
+
+    pub fn is_local_engine(&self) -> bool {
+        self.local_engine
+    }
+
+    /// Pane title for a list: `Pods`, or `Containers` for a local engine.
+    pub fn kind_title(&self, kind: ResourceKind) -> &'static str {
+        match (self.local_engine, kind) {
+            (true, ResourceKind::Pods) => "Containers",
+            (true, ResourceKind::Services) => "Ports",
+            (true, ResourceKind::Storage) => "Volumes",
+            _ => kind.title(),
+        }
+    }
+
+    /// Label of a resource in titles: `Pod`, or `Container` for a local engine.
+    pub fn ref_label(&self, r: &ResourceRef) -> &'static str {
+        match (self.local_engine, r) {
+            (true, ResourceRef::Pod(_)) => "Container",
+            (true, ResourceRef::Service(_)) => "Ports",
+            (true, ResourceRef::Pvc(_)) => "Volume",
+            _ => r.kind_label(),
+        }
     }
 
     /// The last refresh of this list stopped at the item cap.

@@ -201,14 +201,14 @@ fn pane_title(app: &App, kind: ResourceKind) -> String {
         format!(
             "[{}]─{} {}",
             kind.number(),
-            kind.title(),
+            app.kind_title(kind),
             app.row_count(kind)
         )
     } else {
         format!(
             "[{}]─{} {}/{} · filter: {filter}",
             kind.number(),
-            kind.title(),
+            app.kind_title(kind),
             app.row_count(kind),
             app.total_rows(kind)
         )
@@ -262,11 +262,14 @@ pub fn draw_list(
             PaneStatus::Failed(e) => error_lines(e, theme),
             PaneStatus::Ready | PaneStatus::Partial(_) => vec![Line::styled(
                 if app.all_namespaces {
-                    format!("No {} in any namespace", kind.title().to_lowercase())
+                    format!(
+                        "No {} in any namespace",
+                        app.kind_title(kind).to_lowercase()
+                    )
                 } else {
                     format!(
                         "No {} in {}",
-                        kind.title().to_lowercase(),
+                        app.kind_title(kind).to_lowercase(),
                         app.snapshot.namespace
                     )
                 },
@@ -371,7 +374,10 @@ fn loading_line(app: &App, kind: ResourceKind, since_tick: u64, theme: &Theme) -
     let frame = SPINNER[usize::try_from(elapsed % 10).unwrap_or(0)];
     let secs = elapsed * crate::runtime::TICK.as_millis() as u64 / 1000;
     Line::styled(
-        format!("{frame} loading {}… ({secs}s)", kind.title().to_lowercase()),
+        format!(
+            "{frame} loading {}… ({secs}s)",
+            app.kind_title(kind).to_lowercase()
+        ),
         theme.key,
     )
 }
@@ -446,7 +452,7 @@ pub fn draw_tabs(frame: &mut Frame, area: Rect, app: &mut App, theme: &Theme) {
         let label = format!(
             "[{}] {} {}",
             kind.number(),
-            kind.title(),
+            app.kind_title(kind),
             app.row_count(kind)
         );
         let width = u16::try_from(label.width()).unwrap_or(u16::MAX);

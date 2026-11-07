@@ -41,6 +41,17 @@ pub struct Args {
     /// Show built-in sample data instead of connecting to a cluster.
     #[arg(long)]
     pub demo: bool,
+
+    /// Show local containers instead of a cluster, using a Docker-compatible CLI
+    /// (`docker` by default; also `podman`, `nerdctl`). `-n` filters by compose project.
+    #[arg(
+        long,
+        value_name = "COMMAND",
+        num_args = 0..=1,
+        default_missing_value = "docker",
+        conflicts_with_all = ["demo", "context", "kubeconfig"]
+    )]
+    pub oci: Option<String>,
 }
 
 impl Args {
@@ -122,6 +133,42 @@ mod tests {
     fn invalid_namespace_rejected() {
         let a = Args::try_parse_from(["kglass", "-n", "x/secrets"]).unwrap();
         assert!(a.check().unwrap_err().contains("not a valid namespace"));
+    }
+
+    #[test]
+    fn oci_flag_defaults_to_docker_and_accepts_a_command() {
+        assert_eq!(
+            Args::try_parse_from(["kglass", "--oci"])
+                .unwrap()
+                .oci
+                .as_deref(),
+            Some("docker")
+        );
+        assert_eq!(
+            Args::try_parse_from(["kglass", "--oci", "podman"])
+                .unwrap()
+                .oci
+                .as_deref(),
+            Some("podman")
+        );
+        assert_eq!(Args::try_parse_from(["kglass"]).unwrap().oci, None);
+        let with_project = Args::try_parse_from(["kglass", "--oci", "-n", "shop"]).unwrap();
+        assert_eq!(
+            (
+                with_project.oci.as_deref(),
+                with_project.namespace.as_deref()
+            ),
+            (Some("docker"), Some("shop"))
+        );
+        for conflicting in [
+            ["kglass", "--oci", "--demo"],
+            ["kglass", "--oci", "--context=x"],
+        ] {
+            assert!(
+                Args::try_parse_from(conflicting).is_err(),
+                "{conflicting:?}"
+            );
+        }
     }
 
     #[test]

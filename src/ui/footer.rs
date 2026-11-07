@@ -36,7 +36,7 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App, mode: LayoutMode, theme: &
     if let Some(kind) = app.filter_editing {
         let line = Line::from(vec![
             Span::styled(
-                format!("filter {} › ", kind.title().to_lowercase()),
+                format!("filter {} › ", app.kind_title(kind).to_lowercase()),
                 theme.key,
             ),
             Span::styled(format!("{}█", app.filter(kind)), theme.accent),

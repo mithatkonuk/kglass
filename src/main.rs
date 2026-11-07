@@ -10,6 +10,7 @@ use kglass::cli::Args;
 use kglass::cluster::config::{client_for, contexts, load_kubeconfig, resolve};
 use kglass::cluster::fetch::Scope;
 use kglass::fake::sample_snapshot;
+use kglass::oci::Engine;
 use kglass::runtime;
 use kglass::text::SafeText;
 use ratatui::crossterm::event::{DisableMouseCapture, EnableMouseCapture};
@@ -27,13 +28,28 @@ async fn main() -> ExitCode {
     }
     let options = args.to_options(std::env::var("NO_COLOR").ok().as_deref());
 
-    let (app, client, scope, kubeconfig) = if args.demo {
+    let (app, client, scope, kubeconfig, oci) = if args.demo {
         (
             App::new(sample_snapshot(), options),
             None,
             Scope::Namespace(String::new()),
             None,
+            None,
         )
+    } else if let Some(command) = &args.oci {
+        // Local containers through a Docker-compatible CLI; -n filters by compose project.
+        let project = args.namespace.clone();
+        let mut app = App::new_live(
+            LiveTarget {
+                context: SafeText::from(format!("oci: {command}")),
+                namespace: SafeText::from(project.as_deref().unwrap_or("all")),
+                all_namespaces: project.is_none(),
+            },
+            options.plain,
+        );
+        app.set_local_engine();
+        let scope = project.map_or(Scope::All, Scope::Namespace);
+        (app, None, scope, None, Some(Engine::new(command.clone())))
     } else {
         let env = std::env::var("KUBECONFIG").ok();
         let home = std::env::var_os("HOME").map(PathBuf::from);
@@ -68,7 +84,7 @@ async fn main() -> ExitCode {
         } else {
             Scope::Namespace(target.namespace.clone())
         };
-        (app, Some(client), scope, Some(target.kubeconfig))
+        (app, Some(client), scope, Some(target.kubeconfig), None)
     };
 
     // `ratatui::init` enters raw mode and the alternate screen and installs a panic
@@ -86,7 +102,7 @@ async fn main() -> ExitCode {
     }));
 
     let result = match execute!(stdout(), EnableMouseCapture) {
-        Ok(()) => runtime::run(&mut terminal, app, client, scope, kubeconfig).await,
+        Ok(()) => runtime::run(&mut terminal, app, client, scope, kubeconfig, oci).await,
         Err(e) => Err(e.into()),
     };
 

@@ -5,3 +5,6 @@ pub mod convert;
 pub mod engine;
 
 pub use engine::Engine;
+
+#[cfg(test)]
+pub(crate) mod testing;

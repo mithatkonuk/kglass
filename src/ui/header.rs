@@ -60,7 +60,14 @@ fn connection_spans(app: &App, wide: bool, theme: &Theme) -> Vec<Span<'static>> 
             let mut spans = vec![Span::styled("● Connected", theme.ok)];
             if wide {
                 spans.push(Span::styled(
-                    format!("  api {version}  ⟳ every 10s"),
+                    format!(
+                        "  {} {version}  ⟳ every 10s",
+                        if app.is_local_engine() {
+                            "engine"
+                        } else {
+                            "api"
+                        }
+                    ),
                     theme.muted,
                 ));
             }

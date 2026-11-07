@@ -465,3 +465,60 @@ fn all_namespaces_header_and_titles() {
     assert!(s.contains("all namespaces"), "pods subtitle\n{s}");
     assert!(s.contains("namespace all"), "context box\n{s}");
 }
+
+fn local_app() -> kglass::app::App {
+    let mut a = kglass::app::App::new_live(
+        kglass::app::LiveTarget {
+            context: "oci: docker".into(),
+            namespace: "all".into(),
+            all_namespaces: true,
+        },
+        false,
+    );
+    a.set_local_engine();
+    a
+}
+
+#[test]
+fn local_engine_header_and_pane_titles() {
+    let mut a = local_app();
+    a.update(AppEvent::Data(DataEvent::Version {
+        generation: 0,
+        result: Ok("docker 29.9.2".into()),
+    }));
+    a.update(lists_event(sample_lists()));
+    let s = render_to_string(&mut a, 160, 48);
+    let header = s.lines().next().unwrap();
+    assert!(
+        header.contains("ctx oci: docker") && header.contains("engine docker 29.9.2"),
+        "{header}"
+    );
+    assert!(!header.contains(" api "), "{header}");
+    for title in [
+        "[1]─Containers 6",
+        "[2]─Images 7",
+        "[3]─Ports 5",
+        "[4]─Volumes 5",
+    ] {
+        assert!(s.contains(title), "missing {title:?}\n{s}");
+    }
+    assert!(s.contains("Container api-7c9d8f-x2k4"), "viewer title\n{s}");
+}
+
+#[test]
+fn local_engine_down_suggests_starting_it() {
+    let mut a = local_app();
+    a.update(AppEvent::Data(DataEvent::Version {
+        generation: 0,
+        result: Err(FetchError::Unreachable(
+            "Cannot connect to the Docker daemon".into(),
+        )),
+    }));
+    let s = render_to_string(&mut a, 160, 48);
+    assert!(
+        s.contains("✕ Cannot reach the local container engine"),
+        "{s}"
+    );
+    assert!(s.contains("Start your container engine"), "{s}");
+    assert!(!s.contains("VPN"), "{s}");
+}
