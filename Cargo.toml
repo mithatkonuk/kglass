@@ -21,7 +21,8 @@ color-eyre = "0.6.5"
 unicode-width = "0.2.3"
 kube = { version = "4.2", default-features = false, features = ["client", "config", "rustls-tls", "ring"] }
 k8s-openapi = { version = "0.28", features = ["latest"] }
-tokio = { version = "1.47", features = ["rt-multi-thread", "macros", "sync", "time", "signal"] }
+tokio = { version = "1.47", features = ["rt-multi-thread", "macros", "sync", "time", "signal", "process", "io-util"] }
+tokio-util = { version = "0.7", features = ["compat"] }
 futures = "0.3"
 serde = "1"
 serde_json = "1"

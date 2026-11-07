@@ -513,7 +513,7 @@ pub fn log_params(container: String, tail: i64, previous: bool) -> LogParams {
 }
 
 /// Split a byte stream into sanitized lines of at most [`MAX_LOG_LINE`] bytes.
-fn lines_lossy<R>(reader: R) -> impl Stream<Item = Result<SafeText, FetchError>> + Send
+pub(crate) fn lines_lossy<R>(reader: R) -> impl Stream<Item = Result<SafeText, FetchError>> + Send
 where
     R: AsyncBufRead + Unpin + Send,
 {

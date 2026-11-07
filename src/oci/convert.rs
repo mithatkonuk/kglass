@@ -46,7 +46,8 @@ fn first_label<'a>(labels: &'a BTreeMap<String, String>, keys: &[&str]) -> Optio
     keys.iter().find_map(|k| labels.get(*k).map(String::as_str))
 }
 
-fn project_of(c: &Value) -> SafeText {
+/// Compose project of a container, or [`NO_PROJECT`].
+pub(crate) fn project_of(c: &Value) -> SafeText {
     SafeText::from(first_label(&labels_of(c), PROJECT_LABELS).unwrap_or(NO_PROJECT))
 }
 
