@@ -1,0 +1,226 @@
+[
+ {
+  "Id": "73686f702d7765622d3173686f702d7765622d3173686f702d7765622d317368",
+  "Name": "/shop-web-1",
+  "Created": "2026-11-07T10:00:00Z",
+  "RestartCount": 0,
+  "State": {
+   "Status": "running",
+   "Running": true,
+   "Restarting": false,
+   "ExitCode": 0,
+   "StartedAt": "2026-11-07T10:00:00Z",
+   "FinishedAt": "0001-01-01T00:00:00Z"
+  },
+  "Config": {
+   "Image": "nginx:1.27",
+   "Labels": {
+    "com.docker.compose.project": "shop",
+    "com.docker.compose.service": "web"
+   },
+   "Hostname": "shop-web-1"
+  },
+  "Image": "sha256:abababababababababababababababababababababababababababababababab",
+  "Mounts": [
+   {
+    "Type": "volume",
+    "Name": "shop-data",
+    "Source": "/var/lib/docker/volumes/shop-data/_data",
+    "Destination": "/data",
+    "Driver": "local",
+    "Mode": "z",
+    "RW": true,
+    "Propagation": ""
+   },
+   {
+    "Type": "bind",
+    "Source": "/Users/someone/private/config",
+    "Destination": "/config",
+    "Mode": "",
+    "RW": false,
+    "Propagation": "rprivate"
+   }
+  ],
+  "NetworkSettings": {
+   "Ports": {
+    "80/tcp": [
+     {
+      "HostIp": "0.0.0.0",
+      "HostPort": "8080"
+     },
+     {
+      "HostIp": "::",
+      "HostPort": "8080"
+     }
+    ],
+    "443/tcp": null
+   },
+   "Networks": {
+    "bridge": {
+     "IPAddress": "172.17.0.2"
+    }
+   }
+  }
+ },
+ {
+  "Id": "73686f702d776f726b65722d3173686f702d776f726b65722d3173686f702d77",
+  "Name": "/shop-worker-1",
+  "Created": "2026-11-07T09:00:00Z",
+  "RestartCount": 3,
+  "State": {
+   "Status": "exited",
+   "Running": false,
+   "Restarting": false,
+   "ExitCode": 1,
+   "StartedAt": "2026-11-07T09:00:00Z",
+   "FinishedAt": "0001-01-01T00:00:00Z"
+  },
+  "Config": {
+   "Image": "shop/worker:2.1",
+   "Labels": {
+    "com.docker.compose.project": "shop",
+    "com.docker.compose.service": "worker"
+   },
+   "Hostname": "shop-worker-1"
+  },
+  "Image": "sha256:abababababababababababababababababababababababababababababababab",
+  "Mounts": [
+   {
+    "Type": "volume",
+    "Name": "shop-data",
+    "Source": "/var/lib/docker/volumes/shop-data/_data",
+    "Destination": "/data",
+    "Driver": "local",
+    "Mode": "z",
+    "RW": false,
+    "Propagation": ""
+   }
+  ],
+  "NetworkSettings": {
+   "Ports": {},
+   "Networks": {
+    "bridge": {
+     "IPAddress": ""
+    }
+   }
+  }
+ },
+ {
+  "Id": "6d6967726174656d6967726174656d6967726174656d6967726174656d696772",
+  "Name": "/migrate",
+  "Created": "2026-11-07T11:30:00Z",
+  "RestartCount": 0,
+  "State": {
+   "Status": "exited",
+   "Running": false,
+   "Restarting": false,
+   "ExitCode": 0,
+   "StartedAt": "2026-11-07T11:30:00Z",
+   "FinishedAt": "0001-01-01T00:00:00Z"
+  },
+  "Config": {
+   "Image": "shop/migrate:2.1",
+   "Labels": {},
+   "Hostname": "migrate"
+  },
+  "Image": "sha256:abababababababababababababababababababababababababababababababab",
+  "Mounts": [],
+  "NetworkSettings": {
+   "Ports": {},
+   "Networks": {
+    "bridge": {
+     "IPAddress": ""
+    }
+   }
+  }
+ },
+ {
+  "Id": "666c616b79666c616b79666c616b79666c616b79666c616b79666c616b79666c",
+  "Name": "/flaky",
+  "Created": "2026-11-07T11:55:00Z",
+  "RestartCount": 7,
+  "State": {
+   "Status": "restarting",
+   "Running": false,
+   "Restarting": true,
+   "ExitCode": 0,
+   "StartedAt": "2026-11-07T11:55:00Z",
+   "FinishedAt": "0001-01-01T00:00:00Z"
+  },
+  "Config": {
+   "Image": "busybox:1.36",
+   "Labels": {
+    "io.podman.compose.project": "lab"
+   },
+   "Hostname": "flaky"
+  },
+  "Image": "sha256:abababababababababababababababababababababababababababababababab",
+  "Mounts": [],
+  "NetworkSettings": {
+   "Ports": {},
+   "Networks": {
+    "bridge": {
+     "IPAddress": ""
+    }
+   }
+  }
+ },
+ {
+  "Id": "6672657368667265736866726573686672657368667265736866726573686672",
+  "Name": "/fresh",
+  "Created": "2026-11-07T11:59:00Z",
+  "RestartCount": 0,
+  "State": {
+   "Status": "created",
+   "Running": false,
+   "Restarting": false,
+   "ExitCode": 0,
+   "StartedAt": "2026-11-07T11:59:00Z",
+   "FinishedAt": "0001-01-01T00:00:00Z"
+  },
+  "Config": {
+   "Image": "redis:7",
+   "Labels": {},
+   "Hostname": "fresh"
+  },
+  "Image": "sha256:abababababababababababababababababababababababababababababababab",
+  "Mounts": [],
+  "NetworkSettings": {
+   "Ports": {},
+   "Networks": {
+    "bridge": {
+     "IPAddress": ""
+    }
+   }
+  }
+ },
+ {
+  "Id": "6576696c1b5d303b70776e072d626f786576696c1b5d303b70776e072d626f78",
+  "Name": "/evil\u001b]0;pwn\u0007-box",
+  "Created": "2026-11-07T11:00:00Z",
+  "RestartCount": 0,
+  "State": {
+   "Status": "running",
+   "Running": true,
+   "Restarting": false,
+   "ExitCode": 0,
+   "StartedAt": "2026-11-07T11:00:00Z",
+   "FinishedAt": "0001-01-01T00:00:00Z"
+  },
+  "Config": {
+   "Image": "alpine:3",
+   "Labels": {},
+   "Hostname": "evil\u001b]0;pwn\u0007-box"
+  },
+  "Image": "sha256:abababababababababababababababababababababababababababababababab",
+  "Mounts": [],
+  "NetworkSettings": {
+   "Ports": {},
+   "Networks": {
+    "bridge": {
+     "IPAddress": ""
+    }
+   }
+  }
+ }
+]

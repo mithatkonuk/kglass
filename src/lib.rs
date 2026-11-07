@@ -8,6 +8,7 @@ pub mod derive;
 pub mod fake;
 pub mod logfmt;
 pub mod model;
+pub mod oci;
 pub mod runtime;
 pub mod state;
 pub mod text;
