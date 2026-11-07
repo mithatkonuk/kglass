@@ -16,7 +16,7 @@ pub const BINDINGS: &[(&str, &str)] = &[
     ("/", "filter the list / search the logs"),
     ("x / n", "switch context / namespace"),
     ("r", "refresh now"),
-    ("c f p J", "container, follow, previous, raw JSON"),
+    ("c f p J w", "container, follow, prev, JSON, wrap"),
     ("z", "zoom viewer"),
     ("? / esc", "help / close or leave zoom"),
     ("q / ctrl+c", "quit"),

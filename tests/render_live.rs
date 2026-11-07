@@ -549,3 +549,59 @@ fn local_footer_has_no_context_switch() {
     assert!(!footer.contains("x context"), "{footer}");
     assert!(footer.contains("n project"), "{footer}");
 }
+
+#[test]
+fn long_log_lines_wrap_and_w_turns_it_off() {
+    let mut a = live_app();
+    a.update(lists_event(sample_lists()));
+    let long = format!(
+        "2026-11-06 10:24:25.303 DEBUG http    {} END-OF-LINE",
+        "x".repeat(300)
+    );
+    a.update(AppEvent::Data(DataEvent::LogLine {
+        session: 1,
+        line: long.as_str().into(),
+    }));
+    let s = render_to_string(&mut a, 160, 48);
+    assert!(s.contains("END-OF-LINE"), "wrapped line shows its end\n{s}");
+    assert!(s.contains("wrap on (w)"), "{s}");
+    a.update(key(KeyCode::Char('w')));
+    let s = render_to_string(&mut a, 160, 48);
+    assert!(
+        !s.contains("END-OF-LINE"),
+        "unwrapped line is cut at the edge\n{s}"
+    );
+    assert!(s.contains("wrap off (w)"), "{s}");
+}
+
+#[test]
+fn wrapped_logs_follow_shows_the_newest_line() {
+    let mut a = live_app();
+    a.update(lists_event(sample_lists()));
+    for i in 0..60 {
+        let line = format!(
+            "2026-11-06 10:24:25.303 INFO  app     line-{i:02} {}",
+            "y".repeat(150)
+        );
+        a.update(AppEvent::Data(DataEvent::LogLine {
+            session: 1,
+            line: line.as_str().into(),
+        }));
+    }
+    let s = render_to_string(&mut a, 160, 48);
+    assert!(
+        s.contains("line-59"),
+        "newest line visible while following\n{s}"
+    );
+    assert!(!s.contains("line-00"), "{s}");
+}
+
+#[test]
+fn local_empty_ports_say_project() {
+    let mut a = local_app();
+    let mut l = sample_lists();
+    l.services = Ok(Vec::new());
+    a.update(lists_event(l));
+    let s = render_to_string(&mut a, 160, 48);
+    assert!(s.contains("No ports in any project"), "{s}");
+}

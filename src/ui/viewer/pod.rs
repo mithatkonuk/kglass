@@ -43,24 +43,40 @@ pub(super) fn draw_logs(frame: &mut Frame, area: Rect, app: &mut App, theme: &Th
     frame.render_widget(Paragraph::new(toolbar_line(app, theme)), toolbar);
     // Search matches are computed once per frame and reused for the status line.
     let matches = (!app.log_search.is_empty()).then(|| app.log_matches());
-    let lines: Vec<Line> = if matches.is_none() {
+    // Which buffered lines are candidates, and where the view is anchored.
+    let width = usize::from(body.width);
+    let rows = usize::from(body.height);
+    let format = |i: usize| {
         app.logs
-            .visible(app.viewer_rows)
+            .line(i)
             .map(|l| log_line(&display_text(app, l), theme))
-            .collect()
-    } else {
+    };
+    let lines: Vec<Line> = match &matches {
         // Searching: the newest matches, `log_search_back` matches up from the bottom.
-        let matches = matches.as_deref().unwrap_or_default();
-        let start = matches
-            .len()
-            .saturating_sub(app.viewer_rows + app.log_search_back);
-        matches
-            .iter()
-            .skip(start)
-            .take(app.viewer_rows)
-            .filter_map(|&i| app.logs.line(i))
-            .map(|l| log_line(&display_text(app, l), theme))
-            .collect()
+        Some(m) => {
+            let end = m.len().saturating_sub(app.log_search_back);
+            bottom_anchored(
+                m[..end].iter().filter_map(|&i| format(i)),
+                width,
+                rows,
+                app.wrap_logs,
+            )
+        }
+        None if app.logs.follow() => bottom_anchored(
+            (0..app.logs.len()).filter_map(format),
+            width,
+            rows,
+            app.wrap_logs,
+        ),
+        None => {
+            let top = app.logs.top(app.viewer_rows);
+            top_anchored(
+                (top..app.logs.len()).filter_map(format),
+                width,
+                rows,
+                app.wrap_logs,
+            )
+        }
     };
     frame.render_widget(Paragraph::new(lines), body);
 
@@ -84,9 +100,10 @@ pub(super) fn draw_logs(frame: &mut Frame, area: Rect, app: &mut App, theme: &Th
             Span::styled(dot, if streaming { theme.ok } else { theme.muted }),
             Span::styled(
                 format!(
-                    " {state} · {} lines buffered (cap {}){}",
+                    " {state} · {} lines buffered (cap {}) · wrap {} (w){}",
                     app.logs.len(),
                     app.logs.cap(),
+                    if app.wrap_logs { "on" } else { "off" },
                     match &matches {
                         None => String::new(),
                         Some(m) =>
@@ -108,6 +125,99 @@ fn previous_label(app: &App) -> String {
     } else {
         "previous off (p)".to_string()
     }
+}
+
+/// Prefix of continuation rows of a wrapped line.
+const CONTINUATION: &str = "  ";
+
+/// Split a styled line into rows of at most `width` display columns, keeping each
+/// span's style. Continuation rows are indented by two spaces.
+fn wrap_line(line: Line<'static>, width: usize) -> Vec<Line<'static>> {
+    if width == 0 || line.width() <= width {
+        return vec![line];
+    }
+    let indent = if width > CONTINUATION.len() * 2 {
+        CONTINUATION
+    } else {
+        ""
+    };
+    let line_style = line.style;
+    let mut rows = Vec::new();
+    let mut row: Vec<Span<'static>> = Vec::new();
+    let mut used = 0;
+    for span in line.spans {
+        let style = span.style;
+        let mut piece = String::new();
+        for ch in span.content.chars() {
+            let w = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+            if used + w > width && used > indent.len() {
+                if !piece.is_empty() {
+                    row.push(Span::styled(std::mem::take(&mut piece), style));
+                }
+                rows.push(Line::from(std::mem::take(&mut row)).style(line_style));
+                if !indent.is_empty() {
+                    row.push(Span::raw(indent));
+                }
+                used = indent.len();
+            }
+            piece.push(ch);
+            used += w;
+        }
+        if !piece.is_empty() {
+            row.push(Span::styled(piece, style));
+        }
+    }
+    if !row.is_empty() {
+        rows.push(Line::from(row).style(line_style));
+    }
+    rows
+}
+
+/// The last `rows` screen rows of `lines` (the newest at the bottom).
+fn bottom_anchored(
+    lines: impl DoubleEndedIterator<Item = Line<'static>>,
+    width: usize,
+    rows: usize,
+    wrap: bool,
+) -> Vec<Line<'static>> {
+    let mut out: Vec<Line<'static>> = Vec::new();
+    for line in lines.rev() {
+        if out.len() >= rows {
+            break;
+        }
+        let mut wrapped = if wrap {
+            wrap_line(line, width)
+        } else {
+            vec![line]
+        };
+        wrapped.reverse();
+        out.extend(wrapped);
+    }
+    out.truncate(rows);
+    out.reverse();
+    out
+}
+
+/// Screen rows starting with the first of `lines`, up to `rows` rows.
+fn top_anchored(
+    lines: impl Iterator<Item = Line<'static>>,
+    width: usize,
+    rows: usize,
+    wrap: bool,
+) -> Vec<Line<'static>> {
+    let mut out = Vec::new();
+    for line in lines {
+        if out.len() >= rows {
+            break;
+        }
+        if wrap {
+            out.extend(wrap_line(line, width));
+        } else {
+            out.push(line);
+        }
+    }
+    out.truncate(rows);
+    out
 }
 
 /// Structured lines are formatted unless raw mode is on; other lines show as received.
@@ -282,6 +392,48 @@ mod tests {
 
     fn text(line: &Line) -> String {
         line.spans.iter().map(|s| s.content.as_ref()).collect()
+    }
+
+    #[test]
+    fn wrapping_splits_by_display_width_and_keeps_styles() {
+        let theme = Theme::color();
+        let line = log_line("2026-11-06 12:04:11.000 ERROR http    abcdefghij", &theme);
+        let rows = wrap_line(line, 20);
+        let texts: Vec<String> = rows.iter().map(text).collect();
+        assert_eq!(
+            texts,
+            [
+                "2026-11-06 12:04:11.",
+                "  000 ERROR http    ",
+                "  abcdefghij"
+            ]
+        );
+        assert!(
+            texts
+                .iter()
+                .all(|t| unicode_width::UnicodeWidthStr::width(t.as_str()) <= 20)
+        );
+        let error_style = rows[1]
+            .spans
+            .iter()
+            .find(|s| s.content.contains("ERROR"))
+            .unwrap()
+            .style;
+        assert_eq!(error_style, theme.err, "level colour survives the split");
+    }
+
+    #[test]
+    fn wrapping_handles_wide_characters_and_short_lines() {
+        let rows = wrap_line(Line::raw("日本語テキスト"), 6);
+        let texts: Vec<String> = rows.iter().map(text).collect();
+        assert_eq!(texts, ["日本語", "  テキ", "  スト"]);
+        assert_eq!(wrap_line(Line::raw("short"), 80).len(), 1);
+        assert_eq!(wrap_line(Line::raw(""), 10).len(), 1);
+        assert_eq!(
+            wrap_line(Line::raw("abc"), 0).len(),
+            1,
+            "zero width never loops"
+        );
     }
 
     #[test]

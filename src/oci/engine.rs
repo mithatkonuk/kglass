@@ -429,7 +429,10 @@ mod tests {
         let lists = e.fetch_lists(&Scope::All, now()).await;
         assert_eq!(lists.pods, Ok(Vec::new()));
         let calls = fake.calls.lock().unwrap();
-        assert!(calls.iter().all(|c| c[0] != "container"), "no inspect without containers: {calls:?}");
+        assert!(
+            calls.iter().all(|c| c[0] != "container"),
+            "no inspect without containers: {calls:?}"
+        );
     }
 
     #[tokio::test]

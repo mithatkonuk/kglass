@@ -278,8 +278,13 @@ pub fn draw_list(
             PaneStatus::Ready | PaneStatus::Partial(_) => vec![Line::styled(
                 if app.all_namespaces {
                     format!(
-                        "No {} in any namespace",
-                        app.kind_title(kind).to_lowercase()
+                        "No {} in any {}",
+                        app.kind_title(kind).to_lowercase(),
+                        if app.is_local_engine() {
+                            "project"
+                        } else {
+                            "namespace"
+                        }
                     )
                 } else {
                     format!(

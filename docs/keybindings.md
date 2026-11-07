@@ -18,6 +18,7 @@ Everything works with the keyboard alone. The mouse is optional.
 | `/` | List focused: filter the list by name. Log viewer focused: search the logs (matches the raw line, ignoring ASCII case). `Enter` keeps it, `Esc` clears it |
 | `p` | Logs: switch to the previous container instance (after restarts) and back |
 | `J` | Logs: show raw JSON instead of formatted lines |
+| `w` | Logs: wrap long lines onto several rows (on by default) or cut them at the edge |
 | `↑` `↓` then `Enter` | Viewer focused, with related resources shown: choose one and jump to it |
 | `x` | Switch context (from kubeconfig; type to filter, `Enter` switches) |
 | `n` | Switch namespace (type a name if listing namespaces is not allowed). With `--oci`: pick a compose project, or `(all projects)` |

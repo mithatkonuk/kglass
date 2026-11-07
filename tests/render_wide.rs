@@ -139,7 +139,7 @@ fn help_overlay_lists_keys() {
     for needle in [
         "Help",
         "zoom viewer",
-        "container, follow, previous, raw JSON",
+        "container, follow, prev, JSON, wrap",
         "switch context / namespace",
         "filter the list / search the logs",
         "viewer: ↑↓ enter jump",
@@ -174,11 +174,15 @@ fn pod_logs_toolbar_and_status() {
         "follow ● on",
         "tail 500",
         "34 lines buffered (cap 5000)",
-        "12:04:11.000 INFO",
+        "wrap on (w)",
         "12:04:25.421",
     ] {
         assert!(s.contains(needle), "missing {needle:?}\n{s}");
     }
+    // With wrapping off every sample line takes one row, so the oldest one fits too.
+    let mut a = app();
+    a.update(key(ratatui::crossterm::event::KeyCode::Char('w')));
+    assert!(render_to_string(&mut a, 160, 48).contains("12:04:11.000 INFO"));
 }
 
 #[test]

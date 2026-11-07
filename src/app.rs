@@ -221,6 +221,8 @@ pub struct App {
     pub all_namespaces: bool,
     /// Show structured (JSON) log lines as received instead of formatted (`J`).
     pub raw_logs: bool,
+    /// Wrap long log lines onto several rows (`w`); on by default.
+    pub wrap_logs: bool,
     /// Log search text; non-empty shows only matching lines.
     pub log_search: String,
     /// The log search is being typed; captures keys while set.
@@ -291,6 +293,7 @@ impl App {
             quit: false,
             plain: opts.plain,
             raw_logs: false,
+            wrap_logs: true,
             log_search: String::new(),
             log_search_editing: false,
             log_search_back: 0,
@@ -1156,6 +1159,7 @@ impl App {
             KeyCode::Char('c') => self.cycle_container(),
             KeyCode::Char('r') => self.request_refresh(),
             KeyCode::Char('J') => self.raw_logs = !self.raw_logs,
+            KeyCode::Char('w') => self.wrap_logs = !self.wrap_logs,
             KeyCode::Char('p') => self.toggle_previous_logs(),
             KeyCode::Char('/') => match self.focus {
                 Focus::List(kind) => self.filter_editing = Some(kind),
@@ -1878,6 +1882,16 @@ mod tests {
         a.update(key(KeyCode::Right));
         assert_eq!(a.current_tab(), Some(ViewerTab::MountedBy));
         assert_eq!(a.related(), [ResourceRef::Pod("api-7c9d8f-x2k4".into())]);
+    }
+
+    #[test]
+    fn w_toggles_log_wrapping_which_starts_on() {
+        let mut a = app();
+        assert!(a.wrap_logs);
+        a.update(key(KeyCode::Char('w')));
+        assert!(!a.wrap_logs);
+        a.update(key(KeyCode::Char('w')));
+        assert!(a.wrap_logs);
     }
 
     #[test]
