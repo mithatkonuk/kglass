@@ -54,9 +54,27 @@ pub struct Args {
     pub oci: Option<String>,
 }
 
+/// Compose project names: lowercase letters, digits, `-` and `_`, starting with a
+/// letter or digit.
+fn is_valid_compose_project(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars
+        .next()
+        .is_some_and(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+        && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
+}
+
 impl Args {
     /// Reject flag combinations this version cannot honour yet.
     pub fn check(&self) -> Result<(), String> {
+        if let Some(project) = self.namespace.as_ref().filter(|_| self.oci.is_some()) {
+            if !is_valid_compose_project(project) {
+                return Err(format!(
+                    "\"{project}\" is not a valid compose project name (lowercase letters, digits, '-' and '_')"
+                ));
+            }
+            return Ok(());
+        }
         if let Some(ns) = &self.namespace
             && !crate::cluster::config::is_valid_namespace(ns)
         {
@@ -169,6 +187,29 @@ mod tests {
                 "{conflicting:?}"
             );
         }
+    }
+
+    #[test]
+    fn oci_projects_follow_compose_naming() {
+        assert!(
+            Args::try_parse_from(["kglass", "--oci", "-n", "my_app"])
+                .unwrap()
+                .check()
+                .is_ok()
+        );
+        assert!(
+            Args::try_parse_from(["kglass", "--oci", "-n", "x/y"])
+                .unwrap()
+                .check()
+                .is_err()
+        );
+        assert!(
+            Args::try_parse_from(["kglass", "-n", "my_app"])
+                .unwrap()
+                .check()
+                .is_err(),
+            "kube rules unchanged"
+        );
     }
 
     #[test]

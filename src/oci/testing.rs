@@ -18,6 +18,8 @@ pub(crate) struct Fake {
     pub(crate) fail: Option<FetchError>,
     pub(crate) no_containers: bool,
     pub(crate) server_version: &'static str,
+    /// The first `container inspect` fails like a container that vanished after `ps`.
+    pub(crate) fail_first_inspect: std::sync::atomic::AtomicBool,
 }
 
 impl Runner for Fake {
@@ -27,6 +29,13 @@ impl Runner for Fake {
             (Some(e), _) => Err(e.clone()),
             (None, "ps") if self.no_containers => Ok(Vec::new()),
             (None, "ps") => Ok(b"id-web\nid-worker\nid-migrate\nid-flaky\nid-fresh\nid-evil\n".to_vec()),
+            (None, "container")
+                if self
+                    .fail_first_inspect
+                    .swap(false, std::sync::atomic::Ordering::SeqCst) =>
+            {
+                Err(FetchError::Unreachable("Error: No such container: id-fresh".into()))
+            }
             (None, "container") => {
                 let all: Vec<Value> = serde_json::from_str(include_str!("../../tests/fixtures/oci-inspect.json")).unwrap();
                 let wanted: Vec<Value> = if args.len() == 4 && !args[3].starts_with("id-") {
@@ -36,7 +45,8 @@ impl Runner for Fake {
                 };
                 Ok(serde_json::to_vec(&wanted).unwrap())
             }
-            (None, "volume") => Ok(br#"[{"Name":"shop-data","Driver":"local","Mountpoint":"/var/lib/docker/volumes/shop-data/_data"}]"#.to_vec()),
+            (None, "volume") if args[1] == "ls" => Ok(b"shop-data\n".to_vec()),
+            (None, "volume") => Ok(br#"[{"Name":"shop-data","Driver":"local","Mountpoint":"/var/lib/docker/volumes/shop-data/_data","Options":{"type":"cifs","password":"s3cr3t"}}]"#.to_vec()),
             (None, "version") if args[2].contains("Server") => Ok(format!("{}\n", self.server_version).into_bytes()),
             (None, "version") => Ok(b"5.8.0\n".to_vec()),
             _ => Err(FetchError::Unreachable("unexpected command".into())),

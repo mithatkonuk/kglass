@@ -20,6 +20,44 @@ use crate::cluster::fetch::{FetchError, Lists, REQUEST_TIMEOUT, Scope, lines_los
 use crate::model::ResourceRef;
 use crate::text::SafeText;
 
+/// Picker entry meaning "every compose project" (and containers without one).
+pub const ALL_PROJECTS: &str = "(all projects)";
+/// Container ids per `container inspect` call, to stay far below ARG_MAX.
+const INSPECT_BATCH: usize = 200;
+
+/// Split container ids into `container inspect` batches.
+pub(crate) fn inspect_batches(ids: &[String]) -> Vec<Vec<String>> {
+    ids.chunks(INSPECT_BATCH).map(<[String]>::to_vec).collect()
+}
+
+/// Remove host paths, the creating command line and volume options from `inspect`
+/// output before display. Environment variables stay (shown as-is, like kubectl).
+fn redact(value: &mut Value) {
+    if let Some(config) = value.get_mut("Config").and_then(Value::as_object_mut) {
+        config.remove("CreateCommand");
+    }
+    if let Some(host) = value.get_mut("HostConfig").and_then(Value::as_object_mut) {
+        host.remove("Binds");
+    }
+    for mount in value
+        .get_mut("Mounts")
+        .and_then(Value::as_array_mut)
+        .into_iter()
+        .flatten()
+    {
+        if mount.get("Type").and_then(Value::as_str) == Some("bind")
+            && let Some(m) = mount.as_object_mut()
+        {
+            m.remove("Source");
+        }
+    }
+    if let Some(options) = value.get_mut("Options").and_then(Value::as_object_mut) {
+        for v in options.values_mut() {
+            *v = Value::String("***".to_string());
+        }
+    }
+}
+
 /// Runs one CLI invocation. A trait so tests can use a fake engine.
 pub trait Runner: Send + Sync {
     /// Run to completion and return stdout; a non-zero exit is an error.
@@ -109,11 +147,30 @@ impl Runner for ProcessRunner {
             stdout.unwrap_or_else(|| stream::empty().boxed()),
             stderr.unwrap_or_else(|| stream::empty().boxed()),
         );
-        // The stream owns the child: dropping the stream kills the process.
+        // The stream owns the child until the end: dropping the stream early kills
+        // the process. When output ends, a failed exit (e.g. no such container) is
+        // reported as an error instead of a silent end.
+        let exit = stream::once(async move {
+            match child.wait().await {
+                Ok(status) if !status.success() => Some(Err(FetchError::Unreachable(
+                    SafeText::from(format!("logs command ended with {status}")),
+                ))),
+                _ => None,
+            }
+        })
+        .filter_map(futures::future::ready);
+        let mut last_stderr: Option<SafeText> = None;
         merged
-            .map(move |line| {
-                let _owner = &child;
-                line
+            .chain(exit)
+            .map(move |item| match item {
+                Err(FetchError::Unreachable(_)) if last_stderr.is_some() => Err(
+                    FetchError::Unreachable(last_stderr.take().unwrap_or_default()),
+                ),
+                Ok(line) => {
+                    last_stderr = Some(line.clone());
+                    Ok(line)
+                }
+                other => other,
             })
             .boxed()
     }
@@ -155,8 +212,16 @@ impl Engine {
         }
     }
 
-    /// `container inspect` for every container (running or not).
+    /// `container inspect` for every container (running or not). Retried once when
+    /// a container vanishes between `ps` and `inspect`.
     async fn inspect_all(&self) -> Result<Vec<Value>, FetchError> {
+        match self.inspect_once().await {
+            Ok(all) => Ok(all),
+            Err(_) => self.inspect_once().await,
+        }
+    }
+
+    async fn inspect_once(&self) -> Result<Vec<Value>, FetchError> {
         let ids = self.runner.run(args(&["ps", "-aq", "--no-trunc"])).await?;
         let ids: Vec<String> = String::from_utf8_lossy(&ids)
             .lines()
@@ -164,15 +229,33 @@ impl Engine {
             .filter(|id| !id.is_empty())
             .map(str::to_string)
             .collect();
-        if ids.is_empty() {
-            return Ok(Vec::new());
+        let mut all = Vec::new();
+        for batch in inspect_batches(&ids) {
+            let mut inspect = args(&["container", "inspect", "--"]);
+            inspect.extend(batch);
+            let json = self.runner.run(inspect).await?;
+            let mut items: Vec<Value> = serde_json::from_slice(&json).map_err(|e| {
+                FetchError::Unreachable(SafeText::from(format!("unexpected inspect output: {e}")))
+            })?;
+            all.append(&mut items);
         }
-        let mut inspect = args(&["container", "inspect", "--"]);
-        inspect.extend(ids);
-        let json = self.runner.run(inspect).await?;
-        serde_json::from_slice(&json).map_err(|e| {
-            FetchError::Unreachable(SafeText::from(format!("unexpected inspect output: {e}")))
-        })
+        Ok(all)
+    }
+
+    /// Names of all volumes; an error just means unused volumes are not listed.
+    async fn volume_names(&self) -> Vec<String> {
+        self.runner
+            .run(args(&["volume", "ls", "--format", "{{.Name}}"]))
+            .await
+            .map(|out| {
+                String::from_utf8_lossy(&out)
+                    .lines()
+                    .map(str::trim)
+                    .filter(|n| !n.is_empty())
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     /// Containers, published ports and volumes. `Scope::Namespace` filters by
@@ -191,6 +274,10 @@ impl Engine {
                 };
             }
         };
+        let unused_candidates = match scope {
+            Scope::All => self.volume_names().await,
+            Scope::Namespace(_) => Vec::new(),
+        };
         let raw: Vec<Value> = match scope {
             Scope::All => raw,
             Scope::Namespace(project) => raw
@@ -201,7 +288,7 @@ impl Engine {
         Lists {
             pods: Ok(raw.iter().filter_map(|c| convert::pod(c, now)).collect()),
             services: Ok(raw.iter().filter_map(convert::published).collect()),
-            storage: Ok(convert::volumes(&raw)),
+            storage: Ok(convert::volumes_with_unused(&raw, &unused_candidates)),
             storage_partial: None,
             events: Ok(Vec::new()),
             truncated: Vec::new(),
@@ -223,18 +310,20 @@ impl Engine {
         Ok(SafeText::from(self.command.as_str()))
     }
 
-    /// Compose projects in use, for the namespace picker.
+    /// Picker entries: all projects, `-` (no project) when used, then each project.
     pub async fn projects(&self) -> Result<Vec<SafeText>, FetchError> {
-        let mut projects: Vec<String> = self
-            .inspect_all()
-            .await?
-            .iter()
-            .map(|c| pod_project(c).to_string())
-            .filter(|p| p != NO_PROJECT)
-            .collect();
+        let all = self.inspect_all().await?;
+        let mut projects: Vec<String> = all.iter().map(pod_project).collect();
+        let has_unprojected = projects.iter().any(|p| p == NO_PROJECT);
+        projects.retain(|p| p != NO_PROJECT);
         projects.sort();
         projects.dedup();
-        Ok(projects.into_iter().map(SafeText::from).collect())
+        let mut entries = vec![SafeText::from(ALL_PROJECTS)];
+        if has_unprojected {
+            entries.push(SafeText::from(NO_PROJECT));
+        }
+        entries.extend(projects.into_iter().map(SafeText::from));
+        Ok(entries)
     }
 
     /// `inspect` output of a container (pods and published ports) or volume, as YAML.
@@ -250,8 +339,13 @@ impl Engine {
         let value: Value = serde_json::from_slice(&json).map_err(|e| {
             FetchError::Unreachable(SafeText::from(format!("unexpected inspect output: {e}")))
         })?;
-        let one = value.as_array().and_then(|a| a.first()).unwrap_or(&value);
-        serde_norway::to_string(one)
+        let mut one = value
+            .as_array()
+            .and_then(|a| a.first())
+            .cloned()
+            .unwrap_or(value);
+        redact(&mut one);
+        serde_norway::to_string(&one)
             .map_err(|e| FetchError::Unreachable(SafeText::from(e.to_string())))
     }
 
@@ -299,7 +393,7 @@ mod tests {
     async fn lists_containers_ports_and_volumes() {
         let (e, fake) = healthy();
         let lists = e.fetch_lists(&Scope::All, now()).await;
-        assert_eq!(lists.pods.unwrap().len(), 6);
+        assert_eq!(lists.pods.unwrap().len(), 8);
         assert_eq!(lists.services.unwrap().len(), 1);
         assert_eq!(lists.storage.unwrap()[0].name.as_str(), "shop-data");
         assert_eq!(lists.events, Ok(Vec::new()));
@@ -322,7 +416,7 @@ mod tests {
             .iter()
             .map(|p| p.name.to_string())
             .collect();
-        assert_eq!(names, ["shop-web-1", "shop-worker-1"]);
+        assert_eq!(names, ["shop-web-1", "shop-worker-1", "sick"]);
         assert_eq!(lists.storage.unwrap().len(), 1);
     }
 
@@ -334,7 +428,8 @@ mod tests {
         });
         let lists = e.fetch_lists(&Scope::All, now()).await;
         assert_eq!(lists.pods, Ok(Vec::new()));
-        assert_eq!(fake.calls.lock().unwrap().len(), 1);
+        let calls = fake.calls.lock().unwrap();
+        assert!(calls.iter().all(|c| c[0] != "container"), "no inspect without containers: {calls:?}");
     }
 
     #[tokio::test]
@@ -371,7 +466,7 @@ mod tests {
             .iter()
             .map(ToString::to_string)
             .collect();
-        assert_eq!(projects, ["lab", "shop"]);
+        assert_eq!(projects, [ALL_PROJECTS, "-", "lab", "shop"]);
     }
 
     #[tokio::test]
@@ -390,6 +485,97 @@ mod tests {
         let calls = fake.calls.lock().unwrap();
         assert_eq!(calls[0], ["container", "inspect", "--", "shop-web-1"]);
         assert_eq!(calls[1], ["volume", "inspect", "--", "shop-data"]);
+    }
+
+    #[tokio::test]
+    async fn yaml_redacts_host_paths_create_command_and_volume_options() {
+        let (e, _) = healthy();
+        let y = e
+            .inspect_yaml(&ResourceRef::Pod("shop-web-1".into()))
+            .await
+            .unwrap();
+        assert!(
+            !y.contains("/Users/someone"),
+            "bind-mount host paths hidden\n{y}"
+        );
+        assert!(
+            !y.contains("hunter2") && !y.contains("CreateCommand"),
+            "create command hidden\n{y}"
+        );
+        assert!(
+            y.contains("APP_MODE=demo"),
+            "env shown as-is, like kubectl\n{y}"
+        );
+        assert!(
+            y.contains("/var/lib/docker/volumes/shop-data/_data"),
+            "named volume paths kept"
+        );
+        let v = e
+            .inspect_yaml(&ResourceRef::Pvc("shop-data".into()))
+            .await
+            .unwrap();
+        assert!(
+            !v.contains("s3cr3t") && v.contains("password: '***'"),
+            "{v}"
+        );
+    }
+
+    #[tokio::test]
+    async fn vanished_container_is_retried_once() {
+        let (e, fake) = engine(Fake {
+            fail_first_inspect: true.into(),
+            server_version: "1",
+            ..Fake::default()
+        });
+        let lists = e.fetch_lists(&Scope::All, now()).await;
+        assert!(lists.pods.is_ok(), "{:?}", lists.pods);
+        let inspects = fake
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|c| c[0] == "container")
+            .count();
+        assert_eq!(inspects, 2);
+    }
+
+    #[test]
+    fn inspect_is_batched() {
+        let ids: Vec<String> = (0..450).map(|i| format!("id{i}")).collect();
+        let batches = inspect_batches(&ids);
+        assert_eq!(
+            batches.iter().map(Vec::len).collect::<Vec<_>>(),
+            [200, 200, 50]
+        );
+    }
+
+    #[tokio::test]
+    async fn projects_offer_all_and_no_project() {
+        let (e, _) = healthy();
+        let projects: Vec<String> = e
+            .projects()
+            .await
+            .unwrap()
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        assert_eq!(projects, [ALL_PROJECTS, "-", "lab", "shop"]);
+    }
+
+    #[tokio::test]
+    async fn failed_log_command_reports_an_error() {
+        let runner = ProcessRunner::new("sh");
+        let items: Vec<_> = runner
+            .stream(vec![
+                "-c".into(),
+                "echo 'Error: No such container: x' >&2; exit 1".into(),
+            ])
+            .collect()
+            .await;
+        assert!(
+            matches!(items.last(), Some(Err(FetchError::Unreachable(m))) if m.as_str().contains("No such container")),
+            "{items:?}"
+        );
     }
 
     #[tokio::test]

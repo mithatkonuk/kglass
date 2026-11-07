@@ -609,6 +609,12 @@ impl App {
         if !self.is_live() || self.current_tab() != Some(ViewerTab::Logs) {
             return;
         }
+        if self.local_engine {
+            self.log_hint = Some(SafeText::from(
+                "previous logs are not available for local containers",
+            ));
+            return;
+        }
         if !self.logs_previous && self.current_container_restarts() == Some(0) {
             self.log_hint = Some(SafeText::from("no previous container (0 restarts)"));
             return;
@@ -647,7 +653,9 @@ impl App {
     /// the log stream and starts a new generation so late answers are dropped.
     fn switch_target(&mut self, context: SafeText, namespace: SafeText) {
         self.picker = None;
-        self.all_namespaces = false;
+        // For a local engine, "(all projects)" shows every container again.
+        let all = self.local_engine && namespace.as_str() == crate::oci::engine::ALL_PROJECTS;
+        self.all_namespaces = all;
         self.generation += 1;
         self.log_session += 1;
         if self.log_state == LogState::Streaming {
@@ -656,7 +664,11 @@ impl App {
         self.log_state = LogState::Idle;
         self.logs.clear();
         self.snapshot.context = context.clone();
-        self.snapshot.namespace = namespace.clone();
+        self.snapshot.namespace = if all {
+            SafeText::from("all")
+        } else {
+            namespace.clone()
+        };
         self.snapshot.pods.clear();
         self.snapshot.services.clear();
         self.snapshot.storage.clear();
@@ -2353,6 +2365,41 @@ mod tests {
             a.update(key(KeyCode::Enter));
             assert!(!a.all_namespaces);
             assert_eq!(a.snapshot.namespace.as_str(), "team-a");
+        }
+
+        fn local() -> App {
+            let mut a = loaded();
+            a.set_local_engine();
+            a
+        }
+
+        #[test]
+        fn previous_logs_do_nothing_for_local_containers() {
+            let mut a = local();
+            a.update(key(KeyCode::Down));
+            a.update(key(KeyCode::Enter));
+            a.take_commands();
+            a.update(key(KeyCode::Char('p')));
+            assert!(!a.logs_previous);
+            assert!(a.take_commands().is_empty());
+            assert_eq!(
+                a.log_hint.as_ref().map(SafeText::as_str),
+                Some("previous logs are not available for local containers")
+            );
+        }
+
+        #[test]
+        fn picking_all_projects_shows_everything_again() {
+            let mut a = local();
+            a.update(key(KeyCode::Char('n')));
+            a.update(data(DataEvent::Namespaces {
+                generation: 0,
+                result: Ok(vec![crate::oci::engine::ALL_PROJECTS.into(), "shop".into()]),
+            }));
+            a.update(key(KeyCode::Up));
+            a.update(key(KeyCode::Enter));
+            assert!(a.all_namespaces);
+            assert_eq!(a.snapshot.namespace.as_str(), "all");
         }
 
         #[test]

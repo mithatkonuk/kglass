@@ -537,3 +537,15 @@ fn local_engine_down_suggests_starting_it() {
     assert!(s.contains("Start your container engine"), "{s}");
     assert!(!s.contains("VPN"), "{s}");
 }
+
+#[test]
+fn local_footer_has_no_context_switch() {
+    let mut a = local_app();
+    let footer = render_to_string(&mut a, 160, 48)
+        .lines()
+        .last()
+        .unwrap()
+        .to_string();
+    assert!(!footer.contains("x context"), "{footer}");
+    assert!(footer.contains("n project"), "{footer}");
+}

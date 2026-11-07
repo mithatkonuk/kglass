@@ -78,7 +78,8 @@ pub fn pod(c: &Value, now: Timestamp) -> Option<Pod> {
     let (status, waiting) = match state {
         "running" => (PodStatus::Running, None),
         "restarting" => (PodStatus::Restarting, None),
-        "exited" | "dead" | "stopped" if exit_code == 0 && state != "dead" => {
+        // 130/137/143 are SIGINT/SIGKILL/SIGTERM from `docker stop`: stopped, not failed.
+        "exited" | "stopped" if matches!(exit_code, 0 | 130 | 137 | 143) => {
             (PodStatus::Completed, None)
         }
         "exited" | "dead" | "stopped" => (PodStatus::Failed, None),
@@ -112,7 +113,11 @@ pub fn pod(c: &Value, now: Timestamp) -> Option<Pod> {
         containers: vec![Container {
             name: SafeText::from(service.unwrap_or(name.as_str())),
             image: SafeText::from(str_at(c, &["Config", "Image"]).unwrap_or("")),
-            ready: status == PodStatus::Running,
+            ready: status == PodStatus::Running
+                && !matches!(
+                    str_at(c, &["State", "Health", "Status"]),
+                    Some("unhealthy" | "starting")
+                ),
             restarts,
             init: false,
             waiting_reason: waiting,
@@ -175,6 +180,40 @@ pub fn published(c: &Value) -> Option<Service> {
 /// Named volumes and the containers mounting them. Bind mounts (host paths) are
 /// deliberately not listed.
 pub fn volumes(containers: &[Value]) -> Vec<StorageItem> {
+    volumes_with_unused(containers, &[])
+}
+
+/// Engine-generated anonymous volume names (64 hex characters).
+fn is_anonymous(name: &str) -> bool {
+    name.len() == 64 && name.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+/// Like [`volumes`], plus the engine's named volumes no container mounts
+/// (status `Unused`). Unused anonymous volumes are left out as noise.
+pub fn volumes_with_unused(containers: &[Value], all_names: &[String]) -> Vec<StorageItem> {
+    let mut by_name = mounted_volumes(containers);
+    for name in all_names {
+        if is_anonymous(name) || by_name.contains_key(name) {
+            continue;
+        }
+        by_name.insert(
+            name.clone(),
+            StorageItem {
+                kind: StorageKind::Volume,
+                name: SafeText::from(name.as_str()),
+                status: SafeText::from("Unused"),
+                capacity: SafeText::from("—"),
+                access_modes: SafeText::from("—"),
+                storage_class: SafeText::from("—"),
+                bound_to: None,
+                mounted_by: Vec::new(),
+            },
+        );
+    }
+    by_name.into_values().collect()
+}
+
+fn mounted_volumes(containers: &[Value]) -> BTreeMap<String, StorageItem> {
     let mut by_name: BTreeMap<String, StorageItem> = BTreeMap::new();
     for c in containers {
         let Some(container) = name_of(c) else {
@@ -219,12 +258,15 @@ pub fn volumes(containers: &[Value]) -> Vec<StorageItem> {
             if running {
                 item.status = SafeText::from("In use");
             }
+            if mount.get("RW").and_then(Value::as_bool).unwrap_or(true) {
+                item.access_modes = SafeText::from("RW");
+            }
             if !item.mounted_by.contains(&container) {
                 item.mounted_by.push(container.clone());
             }
         }
     }
-    by_name.into_values().collect()
+    by_name
 }
 
 #[cfg(test)]
@@ -296,6 +338,45 @@ mod tests {
                 .map(SafeText::as_str),
             Some("Created")
         );
+    }
+
+    #[test]
+    fn stop_signals_are_not_failures_and_unhealthy_is_not_ready() {
+        let all = pods();
+        assert_eq!(
+            named(&all, "stopped-app").status,
+            PodStatus::Completed,
+            "exit 137 after docker stop"
+        );
+        let sick = named(&all, "sick");
+        assert_eq!(sick.status, PodStatus::Running);
+        assert_eq!(sick.ready(), (0, 1), "unhealthy containers are not ready");
+    }
+
+    #[test]
+    fn unused_volumes_listed_and_anonymous_unused_hidden() {
+        let anonymous = "f".repeat(64);
+        let vols = volumes_with_unused(
+            &fixture(),
+            &["shop-data".into(), "orphan".into(), anonymous],
+        );
+        let rows: Vec<(String, String)> = vols
+            .iter()
+            .map(|v| (v.name.to_string(), v.status.to_string()))
+            .collect();
+        assert_eq!(
+            rows,
+            [
+                ("orphan".into(), "Unused".into()),
+                ("shop-data".into(), "In use".into())
+            ]
+        );
+    }
+
+    #[test]
+    fn access_mode_is_rw_when_any_container_writes() {
+        let vols = volumes(&fixture());
+        assert_eq!(vols[0].access_modes.as_str(), "RW");
     }
 
     #[test]

@@ -18,7 +18,17 @@
     "com.docker.compose.project": "shop",
     "com.docker.compose.service": "web"
    },
-   "Hostname": "shop-web-1"
+   "Hostname": "shop-web-1",
+   "CreateCommand": [
+    "podman",
+    "run",
+    "-e",
+    "DB_PASSWORD=hunter2",
+    "nginx:1.27"
+   ],
+   "Env": [
+    "APP_MODE=demo"
+   ]
   },
   "Image": "sha256:abababababababababababababababababababababababababababababababab",
   "Mounts": [
@@ -60,6 +70,11 @@
      "IPAddress": "172.17.0.2"
     }
    }
+  },
+  "HostConfig": {
+   "Binds": [
+    "/Users/someone/private/config:/config:ro"
+   ]
   }
  },
  {
@@ -221,6 +236,81 @@
      "IPAddress": ""
     }
    }
+  }
+ },
+ {
+  "Id": "6d6967726174656d6967726174656d6967726174656d6967726174656d696772",
+  "Name": "/stopped-app",
+  "Created": "2026-11-07T11:30:00Z",
+  "RestartCount": 0,
+  "State": {
+   "Status": "exited",
+   "Running": false,
+   "Restarting": false,
+   "ExitCode": 137,
+   "StartedAt": "2026-11-07T11:30:00Z",
+   "FinishedAt": "0001-01-01T00:00:00Z"
+  },
+  "Config": {
+   "Image": "shop/migrate:2.1",
+   "Labels": {},
+   "Hostname": "migrate"
+  },
+  "Image": "sha256:abababababababababababababababababababababababababababababababab",
+  "Mounts": [],
+  "NetworkSettings": {
+   "Ports": {},
+   "Networks": {
+    "bridge": {
+     "IPAddress": ""
+    }
+   }
+  }
+ },
+ {
+  "Id": "73686f702d7765622d3173686f702d7765622d3173686f702d7765622d317368",
+  "Name": "/sick",
+  "Created": "2026-11-07T10:00:00Z",
+  "RestartCount": 0,
+  "State": {
+   "Status": "running",
+   "Running": true,
+   "Restarting": false,
+   "ExitCode": 0,
+   "StartedAt": "2026-11-07T10:00:00Z",
+   "FinishedAt": "0001-01-01T00:00:00Z",
+   "Health": {
+    "Status": "unhealthy"
+   }
+  },
+  "Config": {
+   "Image": "nginx:1.27",
+   "Labels": {
+    "com.docker.compose.project": "shop",
+    "com.docker.compose.service": "web"
+   },
+   "Hostname": "shop-web-1",
+   "CreateCommand": [
+    "podman",
+    "run",
+    "-e",
+    "DB_PASSWORD=hunter2",
+    "nginx:1.27"
+   ],
+   "Env": [
+    "APP_MODE=demo"
+   ]
+  },
+  "Image": "sha256:abababababababababababababababababababababababababababababababab",
+  "Mounts": [],
+  "NetworkSettings": {
+   "Ports": {},
+   "Networks": {}
+  },
+  "HostConfig": {
+   "Binds": [
+    "/Users/someone/private/config:/config:ro"
+   ]
   }
  }
 ]

@@ -64,7 +64,9 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App, mode: LayoutMode, theme: &
         // Insert before the help/quit hints.
         let at = hints.len() - 2;
         let mut extra = vec![("/", "filter")];
-        if app.is_live() {
+        if app.is_local_engine() {
+            extra.extend_from_slice(&[("n", "project"), ("r", "refresh")]);
+        } else if app.is_live() {
             extra.extend_from_slice(LIVE_HINTS);
         }
         hints.splice(at..at, extra);

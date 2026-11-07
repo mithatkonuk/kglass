@@ -280,7 +280,11 @@ impl Executor {
             // For a local engine the "namespace" is a compose project filter.
             Command::SwitchTarget { namespace, .. } => {
                 self.stop_logs();
-                self.scope = Scope::Namespace(namespace.to_string());
+                self.scope = if namespace.as_str() == crate::oci::engine::ALL_PROJECTS {
+                    Scope::All
+                } else {
+                    Scope::Namespace(namespace.to_string())
+                };
             }
         }
     }
@@ -750,7 +754,7 @@ mod tests {
                 DataEvent::Lists {
                     generation: 1,
                     lists,
-                } => seen.0 = lists.pods.unwrap().len() == 6,
+                } => seen.0 = lists.pods.unwrap().len() == 8,
                 DataEvent::Version {
                     generation: 1,
                     result,
