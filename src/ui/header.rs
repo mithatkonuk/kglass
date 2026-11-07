@@ -29,7 +29,14 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App, mode: LayoutMode, theme: &
         Span::styled("ctx ", theme.muted),
         Span::styled(snap.context.as_str(), theme.title),
         Span::raw("  "),
-        Span::styled("ns ", theme.muted),
+        Span::styled(
+            if app.is_local_engine() {
+                "project "
+            } else {
+                "ns "
+            },
+            theme.muted,
+        ),
         Span::styled(ns, theme.title),
         Span::raw("  "),
     ];

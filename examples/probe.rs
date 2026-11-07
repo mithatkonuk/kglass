@@ -11,6 +11,10 @@ use kglass::cluster::fetch;
 
 #[tokio::main]
 async fn main() {
+    if std::env::args().any(|a| a == "--oci") {
+        probe_oci().await;
+        return;
+    }
     let env = std::env::var("KUBECONFIG").ok();
     let home = std::env::var_os("HOME").map(PathBuf::from);
     let kc = load_kubeconfig(None, env.as_deref(), home.as_deref()).expect("kubeconfig");
@@ -112,4 +116,79 @@ pub async fn render_live_frame(
         out.push('\n');
     }
     out
+}
+
+/// `--oci`: the same check against the local container engine (`docker` CLI).
+async fn probe_oci() {
+    use kglass::app::{App, AppEvent, LiveTarget};
+    use kglass::oci::Engine;
+    use kglass::runtime::Executor;
+    use ratatui::{Terminal, backend::TestBackend};
+
+    let engine = Engine::new("docker");
+    println!("version: {:?}", engine.version().await);
+    let lists = engine
+        .fetch_lists(&fetch::Scope::All, Timestamp::now())
+        .await;
+    let count = |r: &Result<usize, fetch::FetchError>| match r {
+        Ok(n) => n.to_string(),
+        Err(e) => format!("ERR {e}"),
+    };
+    println!(
+        "containers: {}",
+        count(&lists.pods.as_ref().map(Vec::len).map_err(Clone::clone))
+    );
+    println!(
+        "ports:      {}",
+        count(&lists.services.as_ref().map(Vec::len).map_err(Clone::clone))
+    );
+    println!(
+        "volumes:    {}",
+        count(&lists.storage.as_ref().map(Vec::len).map_err(Clone::clone))
+    );
+    if !std::env::args().any(|a| a == "--frame") {
+        return;
+    }
+    let (tx, mut rx) = tokio::sync::mpsc::channel(4096);
+    let mut executor = Executor::new(None, fetch::Scope::All, tx).with_oci(engine);
+    let mut app = App::new_live(
+        LiveTarget {
+            context: "oci: docker".into(),
+            namespace: "all".into(),
+            all_namespaces: true,
+        },
+        true,
+    );
+    app.set_local_engine();
+    let wanted = std::env::args().skip_while(|a| a != "--select").nth(1);
+    let deadline = Instant::now() + std::time::Duration::from_secs(5);
+    while Instant::now() < deadline {
+        for c in app.take_commands() {
+            executor.run(c).await;
+        }
+        if let Some(name) = &wanted
+            && app.selected.as_ref().map(|r| r.name().as_str()) != Some(name.as_str())
+            && let Some(idx) = (0..app.row_count(kglass::model::ResourceKind::Pods)).find(|i| {
+                app.row_ref(kglass::model::ResourceKind::Pods, *i)
+                    .is_some_and(|r| r.name().as_str() == name)
+            })
+        {
+            app.cursors[0].select(idx);
+            app.activate_cursor();
+        }
+        if let Ok(Some(ev)) =
+            tokio::time::timeout(std::time::Duration::from_millis(200), rx.recv()).await
+        {
+            app.update(AppEvent::Data(ev));
+        }
+    }
+    let mut term = Terminal::new(TestBackend::new(160, 40)).unwrap();
+    term.draw(|f| kglass::ui::draw(f, &mut app)).unwrap();
+    let buf = term.backend().buffer().clone();
+    for y in 0..buf.area.height {
+        let line: String = (0..buf.area.width)
+            .map(|x| buf[(x, y)].symbol().to_string())
+            .collect();
+        println!("{line}");
+    }
 }

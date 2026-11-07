@@ -74,7 +74,13 @@ fn storage_status_style(status: &str, theme: &Theme) -> Style {
     }
 }
 
-fn columns(kind: ResourceKind, mode: LayoutMode) -> Vec<(&'static str, Constraint)> {
+/// Table columns. A local engine shows host ports: `HOST-IP` and `UP` (running).
+fn columns(kind: ResourceKind, mode: LayoutMode, local: bool) -> Vec<(&'static str, Constraint)> {
+    let (ip_header, ready_header) = if local {
+        ("HOST-IP", "UP")
+    } else {
+        ("CLUSTER-IP", "EP")
+    };
     use Constraint::{Fill, Length};
     match kind {
         ResourceKind::Pods => vec![
@@ -92,15 +98,15 @@ fn columns(kind: ResourceKind, mode: LayoutMode) -> Vec<(&'static str, Constrain
         ResourceKind::Services if mode == LayoutMode::Wide => vec![
             ("NAME", Fill(1)),
             ("TYPE", Length(12)),
-            ("CLUSTER-IP", Length(12)),
+            (ip_header, Length(12)),
             ("PORTS", Length(14)),
-            ("EP", Length(3)),
+            (ready_header, Length(3)),
         ],
         ResourceKind::Services => vec![
             ("NAME", Fill(1)),
             ("TYPE", Length(12)),
             ("PORTS", Length(14)),
-            ("EP", Length(3)),
+            (ready_header, Length(3)),
         ],
         ResourceKind::Storage => vec![
             ("KIND", Length(4)),
@@ -220,6 +226,15 @@ fn pane_title(app: &App, kind: ResourceKind) -> String {
 }
 
 fn pane_subtitle(app: &App, kind: ResourceKind) -> String {
+    if app.is_local_engine() {
+        return match kind {
+            ResourceKind::Pods if app.all_namespaces => "all projects".to_string(),
+            ResourceKind::Pods => format!("project {}", app.snapshot.namespace),
+            ResourceKind::Images => "derived from containers".to_string(),
+            ResourceKind::Services => String::new(),
+            ResourceKind::Storage => "named volumes".to_string(),
+        };
+    }
     match kind {
         ResourceKind::Pods if app.all_namespaces => "all namespaces".to_string(),
         ResourceKind::Pods => format!("ns {}", app.snapshot.namespace),
@@ -301,7 +316,7 @@ pub fn draw_list(
         inner = rows;
     }
 
-    let cols = columns(kind, mode);
+    let cols = columns(kind, mode, app.is_local_engine());
     let constraints: Vec<Constraint> = std::iter::once(Constraint::Length(1))
         .chain(cols.iter().map(|(_, c)| *c))
         .collect();
@@ -415,7 +430,14 @@ pub fn draw_context(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
     let mut spans = vec![
         Span::styled("context ", theme.muted),
         Span::styled(snap.context.as_str(), theme.title),
-        Span::styled("  namespace ", theme.muted),
+        Span::styled(
+            if app.is_local_engine() {
+                "  project "
+            } else {
+                "  namespace "
+            },
+            theme.muted,
+        ),
         Span::styled(
             if app.all_namespaces {
                 "all"

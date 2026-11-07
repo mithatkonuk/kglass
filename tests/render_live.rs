@@ -503,6 +503,21 @@ fn local_engine_header_and_pane_titles() {
         assert!(s.contains(title), "missing {title:?}\n{s}");
     }
     assert!(s.contains("Container api-7c9d8f-x2k4"), "viewer title\n{s}");
+    for label in [
+        "all projects",
+        "derived from containers",
+        "named volumes",
+        "HOST-IP",
+        "project all",
+    ] {
+        assert!(s.contains(label), "missing {label:?}\n{s}");
+    }
+    for k8s_term in ["PVCs + PVs", "pod specs", "CLUSTER-IP", "all namespaces"] {
+        assert!(
+            !s.contains(k8s_term),
+            "Kubernetes term {k8s_term:?} in local mode\n{s}"
+        );
+    }
 }
 
 #[test]
