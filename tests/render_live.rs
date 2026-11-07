@@ -170,10 +170,7 @@ fn live_logs_status_and_yaml_states() {
 fn live_context_box_without_user() {
     let mut a = live_app();
     let s = render_to_string(&mut a, 160, 48);
-    assert!(
-        s.contains("context dev-01  namespace product-test"),
-        "{s}"
-    );
+    assert!(s.contains("context dev-01  namespace product-test"), "{s}");
     assert!(!s.contains("user "), "{s}");
 }
 
@@ -245,10 +242,7 @@ fn picker_fits_narrow_minimum() {
     let mut a = with_contexts(live_app());
     a.update(key(KeyCode::Char('x')));
     let s = render_to_string(&mut a, 60, 16);
-    assert!(
-        s.contains("Switch context") && s.contains("dev-01"),
-        "{s}"
-    );
+    assert!(s.contains("Switch context") && s.contains("dev-01"), "{s}");
 }
 
 #[test]
@@ -453,10 +447,7 @@ fn auth_help_banner_with_a_stale_selection() {
         result: Err(FetchError::Unauthorized("token expired".into())),
     }));
     let s = render_to_string(&mut a, 160, 48);
-    assert!(
-        s.contains("✕ Cannot authenticate to context dev-01"),
-        "{s}"
-    );
+    assert!(s.contains("✕ Cannot authenticate to context dev-01"), "{s}");
 }
 
 #[test]

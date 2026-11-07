@@ -15,7 +15,7 @@ This note is the working spec. Where it conflicts with the project plan, this no
 
 Debugging a cluster today means switching between `kubectl get`, `describe` and `logs`, and lining up pods, images, services and volumes in your head. Kubeglass keeps the resource lists on screen next to a large viewer, so the question "what is this, and what is it connected to?" is answered by selecting it.
 
-Who it is for: developers, platform engineers and SREs who already have kubeconfig access. The first real users are the owner and the owner's RKE2 dev clusters (`dev-cluster-01/02`).
+Who it is for: developers, platform engineers and SREs who already have kubeconfig access. The first real user is the owner, on their RKE2 dev clusters (`dev-cluster-01/02`).
 
 ## 2. Releases
 
@@ -172,7 +172,7 @@ Testing follows plan §12: unit tests for row formatting, image dedup, relations
 - **Q3.** Which Kubernetes version range does it support? The RKE2 dev clusters were not reachable on 2026-11-06 (i/o timeout, probably VPN). Check the server version, then choose the `k8s-openapi` feature (likely the lowest supported version that covers the dev clusters).
 - **Q4.** Should the "Images" list include images from workload templates (Deployments, StatefulSets) or only running pods? Default: pods only in release 1.
 - ~~Q5~~ **Answered (owner):** show cluster data **as-is, like kubectl**. No redaction of env values or annotations. Kubeconfig credentials are still never shown, and Secret objects are still not fetched.
-- ~~Q6~~ **Answered (owner):** this is the owner's own project and works with any cluster. work clusters are just one place to test. Keep the public repo free of internal cluster names: use generic example names (`dev-east`, `payments`) in docs and fixtures.
+- ~~Q6~~ **Answered (owner):** this is the owner's own project and works with any cluster. Work clusters are just one place to test. Keep the public repo free of internal cluster names: use generic example names (`dev-east`, `payments`) in docs and fixtures.
 - **Q7.** When the user switches context or namespace inside the tool, should it **write that back to kubeconfig** (like `kubectx`/`kubens`, so later `kubectl` calls follow) or change it **for this session only** (like `kubectl --context/-n`)? Writing back touches a local file, not the cluster, so it doesn't break "read-only".
 - ~~Q8~~ **Answered:** Kubeglass / `kglass` (§10).
 
